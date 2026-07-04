@@ -1,14 +1,255 @@
-/* Lampa Modern UI 0.10.0
+/* Lampa Modern UI 0.11.0 — permanent Shots guard. */
+(function () {
+    'use strict';
+
+    var FLAG = '__lmui_shots_guard_v110__';
+    var state = window.__LMUI_SHOTS_STATE__ || { blockedScripts: 0, blockedRequests: 0, removedNodes: 0, policyRuns: 0 };
+    if (typeof state.blockedRequests !== 'number') state.blockedRequests = 0;
+    window.__LMUI_SHOTS_STATE__ = state;
+    if (window[FLAG]) return;
+    window[FLAG] = true;
+
+    function isShotsUrl(value) {
+        return /(?:\/plugin\/shots(?:[?#/]|$)|\/api\/shots\/)/i.test(String(value || ''));
+    }
+
+    function log(event, value) {
+        try { console.info('[LMUI Shots] ' + event, value || ''); } catch (error) {}
+    }
+
+    function completeBlocked(args) {
+        var complete = args && args[1];
+        if (typeof complete === 'function') setTimeout(function () { complete(); }, 0);
+    }
+
+    function wrapLoader(name) {
+        if (!window.Lampa || !Lampa.Utils) return false;
+        var original = Lampa.Utils[name];
+        if (typeof original !== 'function' || original.__lmuiShotsGuard) return true;
+        var wrapped = function () {
+            var args = Array.prototype.slice.call(arguments);
+            var input = args[0];
+            if (Array.isArray(input)) {
+                var filtered = input.filter(function (url) { return !isShotsUrl(url); });
+                if (filtered.length !== input.length) {
+                    state.blockedScripts += input.length - filtered.length;
+                    log('blocked loader item', input.filter(isShotsUrl));
+                }
+                if (!filtered.length) {
+                    completeBlocked(args);
+                    return;
+                }
+                args[0] = filtered;
+            } else if (isShotsUrl(input)) {
+                state.blockedScripts += 1;
+                log('blocked loader url', input);
+                completeBlocked(args);
+                return;
+            }
+            return original.apply(this, args);
+        };
+        wrapped.__lmuiShotsGuard = true;
+        wrapped.__lmuiShotsOriginal = original;
+        Lampa.Utils[name] = wrapped;
+        return true;
+    }
+
+    function scriptSource(node) {
+        if (!node || String(node.tagName || '').toLowerCase() !== 'script') return '';
+        try { return node.src || node.getAttribute('src') || ''; }
+        catch (error) { return ''; }
+    }
+
+    function blockScriptNode(node) {
+        var src = scriptSource(node);
+        if (!isShotsUrl(src)) return false;
+        state.blockedScripts += 1;
+        try { node.type = 'application/lmui-blocked'; } catch (error) {}
+        try { node.removeAttribute('src'); } catch (error) {}
+        try { node.setAttribute('data-lmui-blocked-src', src); } catch (error) {}
+        setTimeout(function () {
+            try { if (typeof node.onload === 'function') node.onload(); } catch (error) {}
+        }, 0);
+        log('blocked script node', src);
+        return true;
+    }
+
+    function wrapInsertion(name) {
+        var proto = window.Element && Element.prototype;
+        if (!proto || typeof proto[name] !== 'function' || proto[name].__lmuiShotsGuard) return;
+        var original = proto[name];
+        var wrapped = function (node) {
+            if (blockScriptNode(node)) return node;
+            return original.apply(this, arguments);
+        };
+        wrapped.__lmuiShotsGuard = true;
+        wrapped.__lmuiShotsOriginal = original;
+        proto[name] = wrapped;
+    }
+
+    function wrapScriptAttributes() {
+        var proto = window.HTMLScriptElement && HTMLScriptElement.prototype;
+        if (!proto || proto.__lmuiShotsAttributesWrapped) return;
+        proto.__lmuiShotsAttributesWrapped = true;
+        var descriptor;
+        try { descriptor = Object.getOwnPropertyDescriptor(proto, 'src'); } catch (error) {}
+        if (descriptor && typeof descriptor.set === 'function' && typeof descriptor.get === 'function') {
+            try {
+                Object.defineProperty(proto, 'src', {
+                    configurable: descriptor.configurable,
+                    enumerable: descriptor.enumerable,
+                    get: descriptor.get,
+                    set: function (value) {
+                        if (isShotsUrl(value)) {
+                            state.blockedScripts += 1;
+                            try { this.setAttribute('data-lmui-blocked-src', String(value)); } catch (error) {}
+                            log('blocked script src', value);
+                            return;
+                        }
+                        return descriptor.set.call(this, value);
+                    }
+                });
+            } catch (error) {}
+        }
+        var originalSetAttribute = proto.setAttribute;
+        if (typeof originalSetAttribute === 'function' && !originalSetAttribute.__lmuiShotsGuard) {
+            var wrappedSetAttribute = function (name, value) {
+                if (String(name || '').toLowerCase() === 'src' && isShotsUrl(value)) {
+                    state.blockedScripts += 1;
+                    try { return Element.prototype.setAttribute.call(this, 'data-lmui-blocked-src', String(value)); }
+                    catch (error) { return; }
+                }
+                return originalSetAttribute.apply(this, arguments);
+            };
+            wrappedSetAttribute.__lmuiShotsGuard = true;
+            proto.setAttribute = wrappedSetAttribute;
+        }
+    }
+
+    function wrapNetwork() {
+        if (typeof window.fetch === 'function' && !window.fetch.__lmuiShotsGuard) {
+            var originalFetch = window.fetch;
+            var wrappedFetch = function (input) {
+                var url = typeof input === 'string' ? input : input && input.url || '';
+                if (!isShotsUrl(url)) return originalFetch.apply(this, arguments);
+                state.blockedRequests += 1;
+                log('blocked fetch', url);
+                if (typeof window.Response === 'function') return Promise.resolve(new Response('', { status: 204, statusText: 'No Content' }));
+                return Promise.resolve({ ok: true, status: 204, text: function () { return Promise.resolve(''); }, json: function () { return Promise.resolve({}); } });
+            };
+            wrappedFetch.__lmuiShotsGuard = true;
+            wrappedFetch.__lmuiShotsOriginal = originalFetch;
+            window.fetch = wrappedFetch;
+        }
+
+        var xhrProto = window.XMLHttpRequest && XMLHttpRequest.prototype;
+        if (xhrProto && typeof xhrProto.open === 'function' && !xhrProto.open.__lmuiShotsGuard) {
+            var originalOpen = xhrProto.open;
+            var wrappedOpen = function (method, url) {
+                if (!isShotsUrl(url)) return originalOpen.apply(this, arguments);
+                state.blockedRequests += 1;
+                this.__lmuiShotsBlocked = true;
+                this.__lmuiShotsBlockedUrl = String(url || '');
+                log('blocked xhr', url);
+                var args = Array.prototype.slice.call(arguments);
+                args[0] = 'GET';
+                args[1] = 'data:application/json,%7B%7D';
+                return originalOpen.apply(this, args);
+            };
+            wrappedOpen.__lmuiShotsGuard = true;
+            wrappedOpen.__lmuiShotsOriginal = originalOpen;
+            xhrProto.open = wrappedOpen;
+        }
+    }
+
+    function removeShotsNodes(root) {
+        var scope = root && root.querySelectorAll ? root : document;
+        var selectors = [
+            'script[src*="/plugin/shots"]',
+            '[data-action="shots"]',
+            '[data-component="shots"]',
+            '#sprite-shots',
+            '.shots-lenta',
+            '.shots-player-button',
+            '.shots-player-recorder',
+            '.shots-slides',
+            '.shots-video-present'
+        ];
+        try {
+            Array.prototype.slice.call(scope.querySelectorAll(selectors.join(','))).forEach(function (node) {
+                if (!node || !node.parentNode) return;
+                if (typeof node.remove === 'function') node.remove();
+                else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+                state.removedNodes += 1;
+            });
+        } catch (error) {}
+    }
+
+    function setStorage(name, value) {
+        try {
+            if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.set === 'function') Lampa.Storage.set(name, value);
+            else if (window.localStorage) localStorage.setItem(name, JSON.stringify(value));
+        } catch (error) {}
+    }
+
+    function enforce() {
+        state.policyRuns += 1;
+        window.plugin_shots_ready = true;
+        setStorage('shots_in_player', false);
+        setStorage('shots_in_card', false);
+        setStorage('content_rows_shots_main', false);
+        setStorage('shots_enabled', false);
+        wrapLoader('putScript');
+        wrapLoader('putScriptAsync');
+        wrapNetwork();
+        try {
+            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') {
+                Lampa.SettingsApi.removeComponent('shots');
+            }
+        } catch (error) {}
+        removeShotsNodes(document);
+    }
+
+    wrapInsertion('appendChild');
+    wrapInsertion('insertBefore');
+    wrapScriptAttributes();
+    enforce();
+
+    var attempts = 0;
+    var timer = setInterval(function () {
+        attempts += 1;
+        enforce();
+        if (attempts >= 80) clearInterval(timer);
+    }, 250);
+
+    if (window.MutationObserver && document.documentElement) {
+        var observer = new MutationObserver(function (mutations) {
+            mutations.forEach(function (mutation) {
+                Array.prototype.slice.call(mutation.addedNodes || []).forEach(function (node) {
+                    if (blockScriptNode(node)) {
+                        if (typeof node.remove === 'function') node.remove();
+                        else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+                        return;
+                    }
+                    removeShotsNodes(node);
+                });
+            });
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+})();
+
+/* Lampa Modern UI 0.11.0
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.10.0';
+    var VERSION = '0.11.0';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v0100_ready__';
+    var READY_FLAG = '__lampa_modern_ui_v0110_ready__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
@@ -35,6 +276,18 @@
     var lastInputMode = '';
     var detailNeedsInitialFocus = false;
     var detailUserInteracted = false;
+    var settingsObserver = null;
+    var settingsGuardInstalled = false;
+    var searchObserver = null;
+    var searchSourcesBridge = null;
+    var searchSourcesTimer = 0;
+    var lastSearchState = '';
+    var controllerDiagnosticsInstalled = false;
+    var mainFallbackInstalled = false;
+    var searchFallbackInstalled = false;
+    var diagnosticsEnabled = true;
+    var diagnosticBuffer = [];
+    var diagnosticSequence = 0;
 
     var KEYS = {
         enabled: 'lmui_enabled',
@@ -666,10 +919,33 @@ body.lampa-modern-ui .explorer-card__head-img.focus {
 }
 
 /* Search */
-body.lampa-modern-ui .search-box {
-    width: min(100%, 88em);
+body.lampa-modern-ui.search--open {
+    --lmui-search-max: min(92em, calc(100vw - 4em));
+}
+
+body.lampa-modern-ui .main-search {
+    background:
+        radial-gradient(75% 54% at 10% -10%, rgba(71, 119, 191, 0.22), transparent 72%),
+        linear-gradient(160deg, rgba(8, 12, 20, 0.99), rgba(5, 8, 13, 0.99));
+}
+
+body.lampa-modern-ui .main-search > .search,
+body.lampa-modern-ui .main-search .scroll.search {
+    width: var(--lmui-search-max);
+    max-width: var(--lmui-search-max);
     margin-inline: auto;
-    padding: 0.55em 0;
+}
+
+body.lampa-modern-ui .main-search .search > .scroll__content > .scroll__body,
+body.lampa-modern-ui .main-search .search__body {
+    padding: 0.65em 0 5em;
+}
+
+body.lampa-modern-ui .search-box {
+    position: relative;
+    width: 100%;
+    margin: 0;
+    padding: 0.4em 0 0.75em;
     border: 0;
     background: transparent;
     box-shadow: none;
@@ -677,41 +953,233 @@ body.lampa-modern-ui .search-box {
 
 body.lampa-modern-ui .search-box .search__input,
 body.lampa-modern-ui .simple-keyboard-input {
-    min-height: 3.15em;
-    padding: 0.65em 0.9em;
-    border: 0.075em solid var(--lmui-border);
-    border-radius: 0.92em;
-    background: var(--lmui-surface);
+    min-height: 3.5em;
+    width: 100%;
+    padding: 0.76em 1em;
+    border: 0.085em solid rgba(255, 255, 255, 0.13);
+    border-radius: 1em;
+    background: rgba(17, 25, 37, 0.96);
     color: var(--lmui-text);
-    font-size: var(--lmui-body);
+    font-size: clamp(1.02em, 1.2vw, 1.22em);
+    font-weight: 620;
+    letter-spacing: -0.018em;
+    box-shadow: 0 0.7em 2em rgba(0, 0, 0, 0.24);
+}
+
+body.lampa-modern-ui .search-box .search__input::placeholder,
+body.lampa-modern-ui .simple-keyboard-input::placeholder {
+    color: var(--lmui-faint);
 }
 
 body.lampa-modern-ui .search-box--focus .search__input,
-body.lampa-modern-ui .search-box--focus .simple-keyboard-input {
+body.lampa-modern-ui .search-box--focus .simple-keyboard-input,
+body.lampa-modern-ui .simple-keyboard-input:focus {
     border-color: var(--lmui-accent);
-    box-shadow: var(--lmui-focus-ring);
+    background: var(--lmui-surface-raised);
+    box-shadow: var(--lmui-focus-ring), 0 1em 2.8em rgba(0, 0, 0, 0.32);
+    outline: 0;
 }
+
+body.lampa-modern-ui .lmui-search-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1em;
+    min-height: 3.15em;
+    margin: 0.2em 0 0.8em;
+    padding: 0.72em 0.92em;
+    border: 0.075em solid var(--lmui-border);
+    border-radius: 0.88em;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+body.lampa-modern-ui .lmui-search-summary__title {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--lmui-text);
+    font-size: 1.02em;
+    font-weight: 720;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+body.lampa-modern-ui .lmui-search-summary__meta {
+    flex: 0 0 auto;
+    color: var(--lmui-muted);
+    font-size: 0.92em;
+    font-weight: 620;
+}
+
+body.lampa-modern-ui .lmui-search-help {
+    margin: 0.35em 0 1.1em;
+    padding: 1.15em 1.2em;
+    border: 0.075em solid rgba(105, 167, 255, 0.18);
+    border-radius: 1em;
+    background: linear-gradient(135deg, rgba(105, 167, 255, 0.11), rgba(255, 255, 255, 0.025));
+    color: var(--lmui-muted);
+    line-height: 1.52;
+}
+
+body.lampa-modern-ui .lmui-search-help strong {
+    display: block;
+    margin-bottom: 0.25em;
+    color: var(--lmui-text);
+    font-size: 1.08em;
+}
+
+body.lampa-modern-ui .search__history,
+body.lampa-modern-ui .search__sources,
+body.lampa-modern-ui .search__results {
+    position: relative;
+    margin-top: 0.72em;
+    padding-top: 1.85em;
+}
+
+body.lampa-modern-ui .search__history::before,
+body.lampa-modern-ui .search__sources::before,
+body.lampa-modern-ui .search__results::before {
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: var(--lmui-muted);
+    font-size: 0.86em;
+    font-weight: 750;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+}
+
+body.lampa-modern-ui .search__history::before { content: "Недавние запросы"; }
+body.lampa-modern-ui .search__sources::before { content: "Источники"; }
+body.lampa-modern-ui .search__results::before { content: "Результаты"; }
 
 body.lampa-modern-ui .search__sources,
 body.lampa-modern-ui .search__history {
-    gap: 0.42em;
+    gap: 0.46em;
 }
 
 body.lampa-modern-ui .search-source,
 body.lampa-modern-ui .search-history-key {
-    padding: 0.48em 0.78em;
-    border: 0.075em solid transparent;
-    border-radius: 0.72em;
-    background: rgba(255, 255, 255, 0.045);
+    min-height: 2.7em;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.52em 0.82em;
+    border: 0.075em solid var(--lmui-border);
+    border-radius: 0.76em;
+    background: rgba(255, 255, 255, 0.042);
     color: var(--lmui-muted);
+    font-weight: 630;
+    transition: transform var(--lmui-fast) var(--lmui-ease), color var(--lmui-fast) ease, border-color var(--lmui-fast) ease, background-color var(--lmui-fast) ease;
 }
 
-body.lampa-modern-ui .search-source.active,
+body.lampa-modern-ui .search-source__count {
+    min-width: 1.55em;
+    margin-left: 0.5em;
+    padding: 0.12em 0.38em;
+    border-radius: 99em;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--lmui-muted);
+    text-align: center;
+}
+
+body.lampa-modern-ui .search-source.active {
+    color: #fff;
+    border-color: rgba(105, 167, 255, 0.46);
+    background: rgba(105, 167, 255, 0.16);
+}
+
+body.lampa-modern-ui .search-source.active .search-source__count {
+    background: var(--lmui-accent);
+    color: #07101c;
+}
+
 body.lampa-modern-ui .search-source.focus,
 body.lampa-modern-ui .search-history-key.focus {
     color: #fff;
-    border-color: rgba(105, 167, 255, 0.4);
+    border-color: var(--lmui-accent);
     background: var(--lmui-accent-soft);
+    box-shadow: var(--lmui-focus-ring);
+    transform: translateY(-0.04em);
+}
+
+body.lampa-modern-ui .search-source--loading::after {
+    content: "";
+    width: 0.72em;
+    height: 0.72em;
+    margin-left: 0.5em;
+    border: 0.12em solid rgba(255, 255, 255, 0.25);
+    border-top-color: var(--lmui-accent-strong);
+    border-radius: 50%;
+    animation: lmui-search-spin 0.75s linear infinite;
+}
+
+@keyframes lmui-search-spin {
+    to { transform: rotate(360deg); }
+}
+
+body.lampa-modern-ui .search__results > .empty,
+body.lampa-modern-ui .search__results .empty {
+    min-height: 11em;
+    display: grid;
+    place-items: center;
+    margin-top: 0.4em;
+    padding: 1.5em;
+    text-align: center;
+}
+
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="landing"] .lmui-search-summary,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="typing"] .lmui-search-summary,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="loading"] .lmui-search-help,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="results"] .lmui-search-help {
+    display: none;
+}
+
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="loading"] .lmui-search-summary__meta {
+    color: var(--lmui-accent-strong);
+}
+
+body.lampa-modern-ui.lmui-layout-desktop .main-search .search__results .items-line {
+    margin-bottom: 0.9em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .main-search {
+    --lmui-search-max: 100%;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .main-search .search > .scroll__content > .scroll__body,
+body.lampa-modern-ui.lmui-layout-phone .main-search .search__body {
+    padding-inline: max(0.72em, env(safe-area-inset-left));
+}
+
+body.lampa-modern-ui.lmui-layout-phone .lmui-search-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .search-source,
+body.lampa-modern-ui.lmui-layout-phone .search-history-key {
+    min-height: 3em;
+}
+
+/* Permanent feature removals. DOM selectors are a fallback for static Settings templates. */
+body.lampa-modern-ui [data-action="shots"],
+body.lampa-modern-ui [data-component="shots"],
+body.lampa-modern-ui #sprite-shots,
+body.lampa-modern-ui .shots-lenta,
+body.lampa-modern-ui .shots-player-button,
+body.lampa-modern-ui .shots-player-recorder,
+body.lampa-modern-ui .shots-slides,
+body.lampa-modern-ui .shots-video-present,
+body.lampa-modern-ui [data-component="parental_control"],
+body.lampa-modern-ui [data-component="remote_configuration"],
+body.lampa-modern-ui [data-component="remote_config"],
+body.lampa-modern-ui [data-component="sync"],
+body.lampa-modern-ui [data-component="account_sync"],
+body.lampa-modern-ui [data-name="account_sync"],
+body.lampa-modern-ui [data-name="sync"],
+body.lampa-modern-ui [data-param="account_sync"],
+body.lampa-modern-ui [data-param="sync"] {
+    display: none !important;
 }
 
 /* Settings, select and modal */
@@ -903,30 +1371,6 @@ body.lampa-modern-ui .lmui-row-state__action {
     margin-top: 0.7em;
     color: var(--lmui-accent-strong);
     font-weight: 680;
-}
-
-/* Search states */
-body.lampa-modern-ui .lmui-search-hint {
-    width: min(100%, 88em);
-    margin: 0.5em auto 1em;
-    padding: 1.1em 1.2em;
-    border: 0.075em solid var(--lmui-border);
-    border-radius: var(--lmui-radius-md);
-    background: rgba(255,255,255,0.035);
-    color: var(--lmui-muted);
-    line-height: 1.5;
-}
-
-body.lampa-modern-ui .lmui-search-hint strong {
-    display: block;
-    margin-bottom: 0.25em;
-    color: var(--lmui-text);
-    font-size: 1.08em;
-}
-
-body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="active"] .lmui-search-hint,
-body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="results"] .lmui-search-hint {
-    display: none;
 }
 
 /* Detail semantics */
@@ -1204,6 +1648,113 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             console.warn('[Lampa Modern UI] Storage.set failed:', name, error);
         }
         return false;
+    }
+
+    function diagnosticTime() {
+        try { return new Date().toISOString(); }
+        catch (error) { return String(Date.now ? Date.now() : 0); }
+    }
+
+    function diagnosticController() {
+        try {
+            var enabled = window.Lampa && Lampa.Controller && typeof Lampa.Controller.enabled === 'function' ? Lampa.Controller.enabled() : null;
+            return enabled ? {
+                name: enabled.name || '',
+                hasController: !!enabled.controller,
+                linkedModernMain: !!(enabled.controller && activeModernMain && enabled.controller.link === activeModernMain)
+            } : { name: '', hasController: false, linkedModernMain: false };
+        } catch (error) {
+            return { name: 'error', hasController: false, linkedModernMain: false };
+        }
+    }
+
+    function diagnostic(event, data, level) {
+        var entry = {
+            seq: ++diagnosticSequence,
+            time: diagnosticTime(),
+            event: String(event || ''),
+            data: data === undefined ? null : data
+        };
+        diagnosticBuffer.push(entry);
+        if (diagnosticBuffer.length > 240) diagnosticBuffer.shift();
+        if (!diagnosticsEnabled) return entry;
+        var method = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info';
+        try { console[method]('[LMUI ' + VERSION + '] ' + entry.event, entry.data || ''); }
+        catch (error) {}
+        return entry;
+    }
+
+    function diagnosticSnapshot() {
+        var active = activeActivity();
+        var search = searchRoot();
+        var focused = document.querySelector('.selector.focus');
+        var focusedData = focused ? cardData(focused) : null;
+        var settingsIds = [];
+        try {
+            settingsIds = Array.prototype.slice.call(document.querySelectorAll('.settings [data-component], .settings__body [data-component]')).map(function (node) {
+                return node.getAttribute('data-component') || '';
+            }).filter(Boolean);
+        } catch (error) {}
+        return {
+            version: VERSION,
+            activeComponent: active && active.component || '',
+            controller: diagnosticController(),
+            inputMode: lastInputMode || '',
+            bodyClasses: document.body ? document.body.className : '',
+            mainActive: !!activeModernMain,
+            mainState: clone(mainViewState),
+            focused: focused ? {
+                className: focused.className,
+                contentId: focusedData && (focusedData.lmui_content_id || contentId(focusedData)) || focused.getAttribute('data-lmui-content') || ''
+            } : null,
+            searchOpen: !!search,
+            searchState: lastSearchState,
+            settingsComponentsInDom: settingsIds,
+            shots: clone(window.__LMUI_SHOTS_STATE__ || {})
+        };
+    }
+
+    function exposeDiagnostics() {
+        window.LMUI = {
+            version: VERSION,
+            enableLogs: function () { diagnosticsEnabled = true; diagnostic('diagnostics.enabled'); },
+            disableLogs: function () { diagnostic('diagnostics.disabled'); diagnosticsEnabled = false; },
+            logs: function () { return diagnosticBuffer.slice(); },
+            clearLogs: function () { diagnosticBuffer = []; diagnosticSequence = 0; },
+            snapshot: diagnosticSnapshot,
+            recoverMain: function () { return activeModernMain && typeof activeModernMain.recoverFocus === 'function' ? activeModernMain.recoverFocus('console') : false; },
+            recoverSearch: function () { return recoverSearchFocus('console'); },
+            enforceShotsOff: function () { enforceShotsOff('console'); return clone(window.__LMUI_SHOTS_STATE__ || {}); },
+            cleanupSettings: function () { installSettingsGuard(); removeHiddenSettingsComponents(); scheduleSettingsCleanupBurst(); return diagnosticSnapshot().settingsComponentsInDom; },
+            dump: function () {
+                var payload = { snapshot: diagnosticSnapshot(), logs: diagnosticBuffer.slice() };
+                try { console.info('[LMUI ' + VERSION + '] dump', payload); } catch (error) {}
+                return payload;
+            }
+        };
+    }
+
+    function installControllerDiagnostics() {
+        if (controllerDiagnosticsInstalled || !window.Lampa || !Lampa.Controller || typeof Lampa.Controller.toggle !== 'function') return;
+        controllerDiagnosticsInstalled = true;
+        var original = Lampa.Controller.toggle;
+        if (original.__lmuiDiagnosticWrapped) return;
+        var wrapped = function (name) {
+            var before = diagnosticController();
+            var result;
+            try {
+                result = original.apply(this, arguments);
+            } finally {
+                var after = diagnosticController();
+                if (before.name !== after.name || name === 'content' || name === 'search' || name === 'settings') {
+                    diagnostic('controller.toggle', { requested: name, before: before, after: after, component: activeComponent() });
+                }
+            }
+            return result;
+        };
+        wrapped.__lmuiDiagnosticWrapped = true;
+        wrapped.__lmuiDiagnosticOriginal = original;
+        Lampa.Controller.toggle = wrapped;
     }
 
     function mediaType(card) {
@@ -1518,9 +2069,14 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
                 self.retry(rowId);
             }
-            node.addEventListener('hover:enter', retry);
+            if (window.$) {
+                $(node).on('hover:enter', retry);
+                $(node).on('hover:focus', function () { self.onFocusNode(node); });
+            } else {
+                node.addEventListener('hover:enter', retry);
+                node.addEventListener('hover:focus', function () { self.onFocusNode(node); });
+            }
             node.addEventListener('click', retry);
-            node.addEventListener('hover:focus', function () { self.onFocusNode(node); });
             return node;
         }
 
@@ -1694,6 +2250,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
         function build(force) {
             if (destroyed) return;
+            var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             var data = readHomeData();
             var signature = homeSignatureFromData(data);
             if (!force && created && signature === builtSignature) return;
@@ -1714,57 +2271,180 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             }
             builtSignature = signature;
             created = true;
+            diagnostic('main.build', {
+                force: !!force,
+                rows: rows.map(function (row) { return { id: row.id, status: row.state.status, count: row.nodes.length }; }),
+                durationMs: Math.round(((window.performance && typeof performance.now === 'function' ? performance.now() : Date.now()) - startedAt) * 10) / 10
+            });
             if (activeModernMain === self) {
                 try { Lampa.Controller.collectionSet($(renderNode)); } catch (error) {}
                 restoreViewState();
             }
         }
 
+        function navigatorApi() {
+            var candidate = window.Lampa && Lampa.Navigator;
+            if (candidate && typeof candidate.move === 'function') return candidate;
+            candidate = window.LampaNavigator;
+            if (candidate && typeof candidate.move === 'function') return candidate;
+            return null;
+        }
+
         function moveHorizontal(step) {
             var row = rows[currentRowIndex];
-            if (!row) return;
-            var next = currentCardIndex + step;
+            if (!row) return false;
+            var fromIndex = currentCardIndex;
+            var next = fromIndex + step;
             if (next < 0) {
+                diagnostic('main.move.boundary', { direction: 'left', row: row.id, controller: diagnosticController() });
                 if (Lampa.Controller && typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('menu');
-                return;
+                return true;
             }
-            if (next >= row.nodes.length) return;
-            focusNode(row.nodes[next]);
+            if (next >= row.nodes.length) {
+                diagnostic('main.move.boundary', { direction: 'right', row: row.id, index: currentCardIndex, count: row.nodes.length });
+                return false;
+            }
+            var moved = focusNode(row.nodes[next]);
+            diagnostic('main.move', { direction: step < 0 ? 'left' : 'right', row: row.id, from: fromIndex, to: next, moved: moved });
+            return moved;
         }
 
         function moveVertical(step) {
-            var nextRow = currentRowIndex + step;
+            var fromRowIndex = currentRowIndex;
+            var nextRow = fromRowIndex + step;
             if (nextRow < 0) {
+                diagnostic('main.move.boundary', { direction: 'up', row: rows[currentRowIndex] && rows[currentRowIndex].id, controller: diagnosticController() });
                 if (Lampa.Controller && typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('head');
-                return;
+                return true;
             }
-            if (nextRow >= rows.length) return;
+            if (nextRow >= rows.length) {
+                diagnostic('main.move.boundary', { direction: 'down', row: rows[currentRowIndex] && rows[currentRowIndex].id, rowCount: rows.length });
+                return false;
+            }
             var row = rows[nextRow];
-            focusNode(row.nodes[Math.min(currentCardIndex, Math.max(0, row.nodes.length - 1))]);
+            var targetIndex = Math.min(currentCardIndex, Math.max(0, row.nodes.length - 1));
+            var moved = focusNode(row.nodes[targetIndex]);
+            diagnostic('main.move', { direction: step < 0 ? 'up' : 'down', fromRow: rows[fromRowIndex] && rows[fromRowIndex].id, toRow: row.id, index: targetIndex, moved: moved });
+            return moved;
+        }
+
+        function moveWithNavigator(direction) {
+            var navigator = navigatorApi();
+            if (!navigator) return false;
+            try {
+                if (typeof navigator.canmove !== 'function' || navigator.canmove(direction)) {
+                    navigator.move(direction);
+                    diagnostic('main.navigator.move', { direction: direction });
+                    return true;
+                }
+            } catch (error) {
+                diagnostic('main.navigator.error', { direction: direction, message: String(error && error.message || error) }, 'warn');
+            }
+            return false;
+        }
+
+        function move(direction) {
+            if (moveWithNavigator(direction)) return true;
+            if (direction === 'left') return moveHorizontal(-1);
+            if (direction === 'right') return moveHorizontal(1);
+            if (direction === 'up') return moveVertical(-1);
+            if (direction === 'down') return moveVertical(1);
+            return false;
+        }
+
+        function enterSelected() {
+            var node = selectedNode() || document.querySelector('.lmui-main .selector.focus');
+            if (!node) {
+                diagnostic('main.enter.missing_focus', { controller: diagnosticController() }, 'warn');
+                return false;
+            }
+            diagnostic('main.enter', { contentId: node.getAttribute('data-lmui-content') || '', row: rows[currentRowIndex] && rows[currentRowIndex].id });
+            try {
+                if (window.$) $(node).trigger('hover:enter');
+                else node.click();
+                return true;
+            } catch (error) {
+                diagnostic('main.enter.error', { message: String(error && error.message || error) }, 'error');
+                return false;
+            }
+        }
+
+        function ensureControllerFocus(reason) {
+            var first = rows[0] && rows[0].nodes[0];
+            var focused = renderNode.querySelector('.selector.focus');
+            var restored = false;
+            try {
+                if (window.$ && Lampa.Controller && typeof Lampa.Controller.collectionSet === 'function') {
+                    Lampa.Controller.collectionSet($(renderNode));
+                }
+            } catch (error) {
+                diagnostic('main.controller.collection_error', { reason: reason, message: String(error && error.message || error) }, 'warn');
+            }
+            if (focused && renderNode.contains(focused)) {
+                focusNode(focused, true);
+                restored = true;
+            } else {
+                restored = restoreViewState();
+                if (!restored) restored = focusNode(first);
+            }
+            diagnostic('main.controller.focus', {
+                reason: reason,
+                restored: restored,
+                selectors: renderNode.querySelectorAll('.selector').length,
+                focused: !!renderNode.querySelector('.selector.focus'),
+                controller: diagnosticController()
+            });
+            return restored;
         }
 
         function installController() {
-            if (!Lampa.Controller || typeof Lampa.Controller.add !== 'function') return;
-            Lampa.Controller.add('content', {
-                toggle: function () {
-                    try { Lampa.Controller.collectionSet($(renderNode)); } catch (error) {}
-                    if (!restoreViewState()) focusNode(rows[0] && rows[0].nodes[0]);
-                },
-                left: function () { moveHorizontal(-1); },
-                right: function () { moveHorizontal(1); },
-                up: function () { moveVertical(-1); },
-                down: function () { moveVertical(1); },
-                enter: function () {
-                    var node = selectedNode();
-                    if (node && window.$) $(node).trigger('hover:enter');
-                },
+            if (!Lampa.Controller || typeof Lampa.Controller.add !== 'function') {
+                diagnostic('main.controller.unavailable', null, 'error');
+                return;
+            }
+            var controller = {
+                link: self,
+                toggle: function () { ensureControllerFocus('toggle'); },
+                update: function () {},
+                left: function () { move('left'); },
+                right: function () { move('right'); },
+                up: function () { move('up'); },
+                down: function () { move('down'); },
+                enter: enterSelected,
                 back: function () {
                     saveViewState();
+                    diagnostic('main.back', { state: clone(mainViewState) });
                     if (Lampa.Activity && typeof Lampa.Activity.backward === 'function') Lampa.Activity.backward();
                 }
-            });
+            };
+            Lampa.Controller.add('content', controller);
+            diagnostic('main.controller.added', { selectors: renderNode.querySelectorAll('.selector').length });
             if (typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('content');
+            setTimeout(function () {
+                if (destroyed || activeModernMain !== self) return;
+                var enabled = diagnosticController();
+                if (enabled.name !== 'content' || !enabled.linkedModernMain || !renderNode.querySelector('.selector.focus')) {
+                    diagnostic('main.controller.recover', { enabled: enabled, hasFocus: !!renderNode.querySelector('.selector.focus') }, 'warn');
+                    Lampa.Controller.add('content', controller);
+                    if (typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('content');
+                    ensureControllerFocus('recover');
+                }
+            }, 120);
         }
+
+        self.handleKey = function (key) {
+            if (key === 'ArrowLeft') return move('left');
+            if (key === 'ArrowRight') return move('right');
+            if (key === 'ArrowUp') return move('up');
+            if (key === 'ArrowDown') return move('down');
+            if (key === 'Enter') return enterSelected();
+            if (key === 'Escape' || key === 'Backspace') {
+                saveViewState();
+                if (Lampa.Activity && typeof Lampa.Activity.backward === 'function') Lampa.Activity.backward();
+                return true;
+            }
+            return false;
+        };
 
         self.onFocusNode = function (node) {
             if (!node || restoring) return;
@@ -1793,6 +2473,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 scrollPosition: typeof row.scroll.position === 'function' ? Number(row.scroll.position()) || 0 : 0,
                 verticalPosition: typeof verticalScroll.position === 'function' ? Number(verticalScroll.position()) || 0 : 0
             };
+            diagnostic('main.focus', { row: row.id, index: cardIndex, contentId: focusState.contentId });
         };
 
         self.retry = function (rowId) {
@@ -1807,10 +2488,16 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         };
 
         self.restoreFocus = restoreViewState;
+        self.recoverFocus = function (reason) { return ensureControllerFocus(reason || 'external'); };
         self.saveState = saveViewState;
-        self.create = function () { build(true); return self.render(); };
+        self.create = function () {
+            diagnostic('main.create', { object: object && { component: object.component, source: object.source, title: object.title } });
+            build(true);
+            return self.render();
+        };
         self.start = function () {
             activeModernMain = self;
+            diagnostic('main.start', { selectors: renderNode.querySelectorAll('.selector').length, controller: diagnosticController() });
             build(false);
             installController();
         };
@@ -1819,6 +2506,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         self.render = function () { return window.$ ? $(renderNode) : renderNode; };
         self.destroy = function () {
             saveViewState();
+            diagnostic('main.destroy', { state: clone(mainViewState) });
             destroyed = true;
             if (activeModernMain === self) activeModernMain = null;
             clearRows();
@@ -2007,32 +2695,145 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function hiddenSettingsId(id) {
-        var value = String(id || '').toLowerCase();
+        var value = String(id || '').toLowerCase().trim();
+        if (!value) return false;
         if (HIDDEN_COMPONENT_IDS.indexOf(value) >= 0) return true;
-        return /(^|_)(sync|synchronization|parental|remote_config|remote_configuration)(_|$)/.test(value);
+        return /(^|[_-])(sync|synchronization|parental|remote[_-]?config(?:uration)?)([_-]|$)/.test(value);
+    }
+
+    function hiddenSettingsText(text) {
+        var value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!value) return false;
+        return /(?:^|\s)(?:синхронизац(?:ия|ии|ию)|sync(?:hronization)?|родительск(?:ий|ого|ому)\s+контрол|parental\s+control|удал[её]нн(?:ая|ой|ую)\s+конфигурац|remote\s+configuration)(?:\s|$)/i.test(value);
+    }
+
+    function settingsNodeIdentifier(node) {
+        if (!node || !node.getAttribute) return '';
+        return node.getAttribute('data-component') ||
+            node.getAttribute('data-name') ||
+            node.getAttribute('data-param') ||
+            node.getAttribute('data-id') || '';
+    }
+
+    function removeHiddenSettingsDom(root) {
+        var scope = root && root.querySelectorAll ? root : document;
+        var removed = [];
+        var nodes = [];
+        try {
+            nodes = Array.prototype.slice.call(scope.querySelectorAll([
+                '.settings-folder',
+                '.settings-param',
+                '.settings__body [data-component]',
+                '.settings__body [data-name]',
+                '.settings__body [data-param]'
+            ].join(',')));
+            if (scope.matches && scope.matches('.settings-folder, .settings-param, [data-component], [data-name], [data-param]')) nodes.unshift(scope);
+        } catch (error) {
+            diagnostic('settings.dom.scan_error', { message: String(error && error.message || error) }, 'warn');
+            return 0;
+        }
+        nodes.forEach(function (node) {
+            if (!node || !node.parentNode) return;
+            var id = settingsNodeIdentifier(node);
+            var text = String(node.textContent || '');
+            if (!hiddenSettingsId(id) && !hiddenSettingsText(text)) return;
+            removed.push({ id: id || '', text: text.replace(/\s+/g, ' ').trim().slice(0, 80) });
+            if (typeof node.remove === 'function') node.remove();
+            else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+        });
+        if (removed.length) diagnostic('settings.dom.removed', { count: removed.length, items: removed });
+        return removed.length;
+    }
+
+    function installSettingsGuard() {
+        if (settingsGuardInstalled || !window.Lampa || !Lampa.SettingsApi) return false;
+        settingsGuardInstalled = true;
+        ['addComponent', 'addParam'].forEach(function (method) {
+            var original = Lampa.SettingsApi[method];
+            if (typeof original !== 'function' || original.__lmuiSettingsGuard) return;
+            var wrapped = function (payload) {
+                var componentId = payload && (payload.component || payload.param && payload.param.component) || '';
+                var displayName = payload && (payload.name || payload.field && payload.field.name) || '';
+                if (hiddenSettingsId(componentId) || hiddenSettingsText(displayName)) {
+                    diagnostic('settings.registration.blocked', { method: method, component: componentId, name: displayName });
+                    return;
+                }
+                return original.apply(this, arguments);
+            };
+            wrapped.__lmuiSettingsGuard = true;
+            wrapped.__lmuiSettingsOriginal = original;
+            Lampa.SettingsApi[method] = wrapped;
+        });
+        diagnostic('settings.guard.installed');
+        return true;
     }
 
     function removeHiddenSettingsComponents() {
-        if (!Lampa.SettingsApi || typeof Lampa.SettingsApi.removeComponent !== 'function') return;
+        if (!window.Lampa || !Lampa.SettingsApi || typeof Lampa.SettingsApi.removeComponent !== 'function') {
+            removeHiddenSettingsDom(document);
+            return;
+        }
         var ids = HIDDEN_COMPONENT_IDS.slice();
+        var before = [];
         try {
             if (typeof Lampa.SettingsApi.allComponents === 'function') {
-                Object.keys(Lampa.SettingsApi.allComponents() || {}).forEach(function (id) {
-                    if (hiddenSettingsId(id) && ids.indexOf(id) < 0) ids.push(id);
+                var all = Lampa.SettingsApi.allComponents() || {};
+                before = Object.keys(all);
+                before.forEach(function (id) {
+                    var component = all[id] || {};
+                    if ((hiddenSettingsId(id) || hiddenSettingsText(component.name)) && ids.indexOf(id) < 0) ids.push(id);
                 });
             }
         } catch (error) {
-            console.warn('[Lampa Modern UI] settings component discovery failed:', error);
+            diagnostic('settings.components.discovery_error', { message: String(error && error.message || error) }, 'warn');
         }
         ids.forEach(function (id) {
             try { Lampa.SettingsApi.removeComponent(id); }
-            catch (error) { console.warn('[Lampa Modern UI] settings component removal failed:', id, error); }
+            catch (error) { diagnostic('settings.components.remove_error', { id: id, message: String(error && error.message || error) }, 'warn'); }
         });
+        var after = [];
+        try { after = typeof Lampa.SettingsApi.allComponents === 'function' ? Object.keys(Lampa.SettingsApi.allComponents() || {}) : []; }
+        catch (error) {}
+        var removedApi = before.filter(function (id) { return after.indexOf(id) < 0 && (hiddenSettingsId(id) || ids.indexOf(id) >= 0); });
+        removeHiddenSettingsDom(document);
+        diagnostic('settings.cleanup', { apiRemoved: removedApi, apiRemaining: after.filter(hiddenSettingsId) });
+    }
+
+    function observeSettingsDom() {
+        if (!window.MutationObserver || settingsObserver || !document.body) return;
+        settingsObserver = new MutationObserver(function (mutations) {
+            if (!document.body.classList.contains('settings--open') && !document.querySelector('.settings__body')) return;
+            var shouldCleanup = false;
+            mutations.forEach(function (mutation) {
+                if (shouldCleanup) return;
+                Array.prototype.slice.call(mutation.addedNodes || []).forEach(function (node) {
+                    if (shouldCleanup || !node || node.nodeType !== 1) return;
+                    if ((node.matches && node.matches('.settings, .settings-folder, .settings-param, [data-component], [data-name], [data-param]')) ||
+                        (node.querySelector && node.querySelector('.settings-folder, .settings-param, [data-component], [data-name], [data-param]'))) {
+                        shouldCleanup = true;
+                    }
+                });
+            });
+            if (shouldCleanup) scheduleSettingsCleanup(0);
+        });
+        settingsObserver.observe(document.body, { childList: true, subtree: true });
     }
 
     function scheduleSettingsCleanup(delay) {
         clearTimeout(settingsCleanupTimer);
-        settingsCleanupTimer = setTimeout(removeHiddenSettingsComponents, typeof delay === 'number' ? delay : 0);
+        settingsCleanupTimer = setTimeout(function () {
+            removeHiddenSettingsComponents();
+            removeHiddenSettingsDom(document);
+        }, typeof delay === 'number' ? delay : 0);
+    }
+
+    function scheduleSettingsCleanupBurst() {
+        [0, 80, 280, 900, 1800].forEach(function (delay) {
+            setTimeout(function () {
+                removeHiddenSettingsComponents();
+                removeHiddenSettingsDom(document);
+            }, delay);
+        });
     }
 
     function cardData(card) {
@@ -2087,34 +2888,267 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         tryFocusPrimaryAction(activity);
     }
 
+    function searchScreen() {
+        var main = document.querySelector('.main-search');
+        if (main) return main;
+        var opened = document.querySelector('body.search--open .search');
+        if (opened) return opened.parentElement || opened;
+        return document.querySelector('.activity--active .search');
+    }
+
     function searchRoot() {
-        return document.querySelector('.activity--active .search, .activity--active .search-box') || document.querySelector('.search--open .search, .search--open .search-box');
+        var screen = searchScreen();
+        if (!screen) return null;
+        if (screen.matches && screen.matches('.search')) return screen;
+        return screen.querySelector('.search') || screen.querySelector('.search-box') || screen;
+    }
+
+    function readSearchQuery(root) {
+        if (!root) return '';
+        var input = root.querySelector('.simple-keyboard-input, input.search__input, input, .search__input');
+        if (!input) return '';
+        var value = input.value !== undefined ? input.value : input.textContent;
+        value = String(value || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+        if (!input.classList.contains('filled') && /^(поиск|search)(\.\.\.)?$/i.test(value)) return '';
+        return value;
+    }
+
+    function activeSearchSource(screen) {
+        return screen && screen.querySelector('.search-source.active') || null;
+    }
+
+    function searchResultCount(screen) {
+        if (!screen) return 0;
+        var activeSource = activeSearchSource(screen);
+        var countNode = activeSource && activeSource.querySelector('.search-source__count');
+        var parsed = countNode ? parseInt(String(countNode.textContent || '').replace(/\D+/g, ''), 10) : NaN;
+        if (isFinite(parsed)) return parsed;
+        var resultsRoot = screen.querySelector('.search__results');
+        return resultsRoot ? resultsRoot.querySelectorAll('.card, .search-item, .explorer-card').length : 0;
+    }
+
+    function ensureSearchChrome(screen, root) {
+        var resultsRoot = screen.querySelector('.search__results') || root.querySelector('.search__results');
+        var summary = screen.querySelector('.lmui-search-summary');
+        if (!summary) {
+            summary = document.createElement('div');
+            summary.className = 'lmui-search-summary';
+            summary.innerHTML = '<div class="lmui-search-summary__title"></div><div class="lmui-search-summary__meta"></div>';
+            if (resultsRoot && resultsRoot.parentNode) resultsRoot.parentNode.insertBefore(summary, resultsRoot);
+            else root.appendChild(summary);
+        }
+        var help = screen.querySelector('.lmui-search-help');
+        if (!help) {
+            help = document.createElement('div');
+            help.className = 'lmui-search-help';
+            var history = screen.querySelector('.search__history');
+            if (history && history.parentNode) history.parentNode.insertBefore(help, history);
+            else root.appendChild(help);
+        }
+        return { summary: summary, help: help };
+    }
+
+    function searchStateCopy(state, query, count) {
+        if (state === 'landing') return {
+            title: 'Быстрый поиск',
+            meta: 'Название, персона или год',
+            help: '<strong>Найдите фильм, сериал или человека</strong>Введите минимум три символа. Недавние запросы и доступные источники находятся ниже.'
+        };
+        if (state === 'typing') return {
+            title: 'Продолжайте ввод',
+            meta: 'Ещё ' + Math.max(0, 3 - query.length) + ' симв.',
+            help: '<strong>Нужно минимум три символа</strong>Так поиск не отправляет лишние запросы и точнее формирует результаты.'
+        };
+        if (state === 'loading') return {
+            title: 'Ищем «' + query + '»',
+            meta: 'Загрузка…',
+            help: ''
+        };
+        if (state === 'results') return {
+            title: 'Результаты для «' + query + '»',
+            meta: count + ' ' + (count === 1 ? 'результат' : count > 1 && count < 5 ? 'результата' : 'результатов'),
+            help: ''
+        };
+        return {
+            title: 'Ничего не найдено',
+            meta: '0 результатов',
+            help: '<strong>Попробуйте другой запрос</strong>Проверьте написание, сократите название или переключите источник.'
+        };
     }
 
     function decorateSearch() {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(function () {
             var root = searchRoot();
-            if (!root) return;
-            var screen = root.closest('.activity--active') || root.parentElement;
-            if (!screen) return;
+            var screen = searchScreen();
+            if (!root || !screen) return;
+            var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             screen.classList.add('lmui-search-screen');
-            var input = root.querySelector('input, .search__input, .simple-keyboard-input');
-            var query = String(input && (input.value !== undefined ? input.value : input.textContent) || '').replace(/ /g, ' ').trim();
-            var resultsRoot = root.querySelector('.search__results') || screen.querySelector('.search__results');
-            var results = resultsRoot ? resultsRoot.querySelectorAll('.card, .search-item, .explorer-card').length : 0;
+            var query = readSearchQuery(root);
+            var count = searchResultCount(screen);
             var loading = !!screen.querySelector('.search-source--loading, .search-looking, .content-loading, .loading-layer');
-            var state = query ? (loading ? 'active' : results ? 'results' : 'empty') : 'landing';
+            var state = !query ? 'landing' : query.length < 3 ? 'typing' : loading ? 'loading' : count ? 'results' : 'empty';
             screen.setAttribute('data-lmui-search-state', state);
-            var hint = screen.querySelector('.lmui-search-hint');
-            if (!hint) {
-                hint = document.createElement('div');
-                hint.className = 'lmui-search-hint';
-                root.insertAdjacentElement('afterend', hint);
+            screen.setAttribute('data-lmui-search-query-length', String(query.length));
+            screen.setAttribute('data-lmui-search-count', String(count));
+            var chrome = ensureSearchChrome(screen, root);
+            var copy = searchStateCopy(state, query, count);
+            var title = chrome.summary.querySelector('.lmui-search-summary__title');
+            var meta = chrome.summary.querySelector('.lmui-search-summary__meta');
+            if (title && title.textContent !== copy.title) title.textContent = copy.title;
+            if (meta && meta.textContent !== copy.meta) meta.textContent = copy.meta;
+            if (chrome.help.innerHTML !== copy.help) chrome.help.innerHTML = copy.help;
+            var helpDisplay = copy.help ? '' : 'none';
+            if (chrome.help.style.display !== helpDisplay) chrome.help.style.display = helpDisplay;
+            var source = activeSearchSource(screen);
+            var sourceName = source ? String(source.textContent || '').replace(/\d+/g, '').replace(/\s+/g, ' ').trim() : '';
+            if (lastSearchState !== state + ':' + query.length + ':' + count + ':' + sourceName) {
+                lastSearchState = state + ':' + query.length + ':' + count + ':' + sourceName;
+                diagnostic('search.state', {
+                    state: state,
+                    queryLength: query.length,
+                    count: count,
+                    source: sourceName,
+                    controller: diagnosticController(),
+                    durationMs: Math.round(((window.performance && typeof performance.now === 'function' ? performance.now() : Date.now()) - startedAt) * 10) / 10
+                });
             }
-            if (state === 'empty') hint.innerHTML = '<strong>Ничего не найдено</strong>Проверьте название или переключите источник.';
-            else hint.innerHTML = '<strong>Поиск фильмов и сериалов</strong>Введите название. История и источники доступны рядом с полем.';
-        }, 80);
+        }, 45);
+    }
+
+    function observeSearchDom() {
+        if (!window.MutationObserver) return;
+        var screen = searchScreen();
+        if (!screen) return;
+        if (searchObserver) searchObserver.disconnect();
+        searchObserver = new MutationObserver(function () { decorateSearch(); });
+        searchObserver.observe(screen, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+        decorateSearch();
+    }
+
+    function closeSearchObserver() {
+        if (searchObserver) searchObserver.disconnect();
+        searchObserver = null;
+        clearTimeout(searchSourcesTimer);
+        searchSourcesTimer = 0;
+        searchSourcesBridge = null;
+        lastSearchState = '';
+    }
+
+    function optimizeSearchSources(sources) {
+        if (!sources || typeof sources.search !== 'function' || sources.__lmuiOptimizedSearch) return;
+        sources.__lmuiOptimizedSearch = true;
+        searchSourcesBridge = sources;
+        var originalSearch = sources.search;
+        var originalCancel = typeof sources.cancel === 'function' ? sources.cancel : null;
+        sources.search = function (query, immediately) {
+            var context = this;
+            var value = String(query || '');
+            clearTimeout(searchSourcesTimer);
+            searchSourcesTimer = 0;
+            if (immediately || value.length < 3) {
+                diagnostic('search.request.immediate', { queryLength: value.length, explicit: !!immediately });
+                return originalSearch.call(context, value, true);
+            }
+            diagnostic('search.request.scheduled', { queryLength: value.length, delayMs: 420 });
+            searchSourcesTimer = setTimeout(function () {
+                searchSourcesTimer = 0;
+                diagnostic('search.request.start', { queryLength: value.length });
+                originalSearch.call(context, value, true);
+                decorateSearch();
+            }, 420);
+        };
+        if (originalCancel) {
+            sources.cancel = function () {
+                clearTimeout(searchSourcesTimer);
+                searchSourcesTimer = 0;
+                return originalCancel.apply(this, arguments);
+            };
+        }
+        if (sources.listener && typeof sources.listener.follow === 'function') {
+            sources.listener.follow('finded', function (event) {
+                diagnostic('search.results', {
+                    source: event && event.source && event.source.title || '',
+                    count: event && Number(event.count) || 0
+                });
+                decorateSearch();
+            });
+            sources.listener.follow('toggle', decorateSearch);
+            sources.listener.follow('create', decorateSearch);
+        }
+        diagnostic('search.sources.optimized', { debounceMs: 420 });
+    }
+
+    function searchControllerHealthy() {
+        var enabled = diagnosticController();
+        var expected = ['search', 'keybord', 'search_history', 'search_sources', 'search_results', 'content'];
+        var screen = searchScreen();
+        var focused = screen && screen.querySelector('.selector.focus, input:focus, textarea:focus');
+        return !!(screen && focused && expected.indexOf(enabled.name) >= 0);
+    }
+
+    function recoverSearchFocus(reason) {
+        var screen = searchScreen();
+        if (!screen || !window.Lampa || !Lampa.Controller || typeof Lampa.Controller.toggle !== 'function') return false;
+        if (searchControllerHealthy()) return true;
+        diagnostic('search.controller.recover', { reason: reason || '', before: diagnosticController() }, 'warn');
+        try {
+            Lampa.Controller.toggle('search');
+            setTimeout(function () {
+                diagnostic('search.controller.recovered', { reason: reason || '', healthy: searchControllerHealthy(), after: diagnosticController() });
+            }, 30);
+            return true;
+        } catch (error) {
+            diagnostic('search.controller.recover_error', { reason: reason || '', message: String(error && error.message || error) }, 'error');
+            return false;
+        }
+    }
+
+    function installSearchFallbackKeys() {
+        if (searchFallbackInstalled) return;
+        searchFallbackInstalled = true;
+        window.addEventListener('keydown', function (event) {
+            if (!searchScreen()) return;
+            var key = event && event.key || '';
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].indexOf(key) < 0) return;
+            var before = diagnosticController();
+            var screen = searchScreen();
+            var beforeFocus = screen && screen.querySelector('.selector.focus, input:focus, textarea:focus');
+            setTimeout(function () {
+                if (!searchScreen()) return;
+                var currentScreen = searchScreen();
+                var afterFocus = currentScreen && currentScreen.querySelector('.selector.focus, input:focus, textarea:focus');
+                var after = diagnosticController();
+                if (!afterFocus || !after.hasController || after.name === before.name && afterFocus === beforeFocus && !searchControllerHealthy()) {
+                    recoverSearchFocus('key-' + key);
+                }
+            }, 24);
+        }, true);
+    }
+
+    function installSearchHooks() {
+        if (!window.Lampa || !Lampa.Search || !Lampa.Search.listener || typeof Lampa.Search.listener.follow !== 'function') {
+            diagnostic('search.hooks.unavailable', null, 'warn');
+            return false;
+        }
+        installSearchFallbackKeys();
+        if (Lampa.Search.__lmuiHooksInstalled) return true;
+        Lampa.Search.__lmuiHooksInstalled = true;
+        Lampa.Search.listener.follow('open', function () {
+            diagnostic('search.open', { controller: diagnosticController() });
+            setTimeout(observeSearchDom, 0);
+            setTimeout(decorateSearch, 80);
+            setTimeout(function () { recoverSearchFocus('open'); }, 140);
+        });
+        Lampa.Search.listener.follow('close', function () {
+            diagnostic('search.close', { controller: diagnosticController() });
+            closeSearchObserver();
+        });
+        Lampa.Search.listener.follow('sources', function (event) {
+            optimizeSearchSources(event && event.sources);
+            setTimeout(observeSearchDom, 0);
+        });
+        return true;
     }
 
     function decorateNode(root) {
@@ -2289,6 +3323,43 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return lastInputMode === 'remote' ? 'remote' : 'keyboard';
     }
 
+    function focusedMainNode() {
+        return document.querySelector('.activity--active .lmui-main .selector.focus, .lmui-main .selector.focus');
+    }
+
+    function installMainFallbackKeys() {
+        if (mainFallbackInstalled) return;
+        mainFallbackInstalled = true;
+        window.addEventListener('keydown', function (event) {
+            if (!activeModernMain || activeComponent() !== 'main') return;
+            var target = event && event.target;
+            if (target && (target.isContentEditable || /^(input|textarea|select)$/i.test(String(target.tagName || '')))) return;
+            var key = event && event.key || '';
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].indexOf(key) < 0) return;
+            var beforeNode = focusedMainNode();
+            var beforeContent = beforeNode && (beforeNode.getAttribute('data-lmui-content') || beforeNode.className) || '';
+            var beforeController = diagnosticController();
+            setTimeout(function () {
+                if (!activeModernMain || activeComponent() !== 'main') return;
+                var afterNode = focusedMainNode();
+                var afterContent = afterNode && (afterNode.getAttribute('data-lmui-content') || afterNode.className) || '';
+                var afterController = diagnosticController();
+                var unchanged = beforeContent === afterContent && beforeController.name === afterController.name;
+                if (!afterNode || unchanged || afterController.name !== 'content' || !afterController.linkedModernMain) {
+                    diagnostic('main.key.fallback', {
+                        key: key,
+                        beforeFocus: beforeContent,
+                        afterFocus: afterContent,
+                        beforeController: beforeController,
+                        afterController: afterController
+                    }, 'warn');
+                    if (!afterNode && typeof activeModernMain.recoverFocus === 'function') activeModernMain.recoverFocus('keyboard-fallback');
+                    else if (typeof activeModernMain.handleKey === 'function') activeModernMain.handleKey(key);
+                }
+            }, 18);
+        }, true);
+    }
+
     function installInputModeListeners() {
         if (inputListenersInstalled) return;
         inputListenersInstalled = true;
@@ -2305,6 +3376,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             setInputModeClass(keyInputMode());
             markDetailInteraction();
         }, { passive: true });
+        installMainFallbackKeys();
     }
 
     function installInteractionHandlers() {
@@ -2342,6 +3414,42 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeMode, type: 'select', values: { focused: 'Полная', minimal: 'Минимальная' }, default: 'focused' }, field: { name: 'Состав главной', description: 'Минимальная оставляет просмотр в процессе и рекомендации.' }, onChange: function () { scheduleHomeRefresh('home-mode'); } });
     }
 
+    function enforceShotsOff(reason) {
+        window.plugin_shots_ready = true;
+        storageSet('shots_in_player', false);
+        storageSet('shots_in_card', false);
+        storageSet('content_rows_shots_main', false);
+        storageSet('shots_enabled', false);
+        try {
+            if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('shots');
+        } catch (error) {
+            diagnostic('shots.settings_remove_error', { message: String(error && error.message || error) }, 'warn');
+        }
+        var removed = 0;
+        try {
+            Array.prototype.slice.call(document.querySelectorAll([
+                '[data-action="shots"]',
+                '[data-component="shots"]',
+                '#sprite-shots',
+                '.shots-lenta',
+                '.shots-player-button',
+                '.shots-player-recorder',
+                '.shots-slides',
+                '.shots-video-present'
+            ].join(','))).forEach(function (node) {
+                if (!node || !node.parentNode) return;
+                if (typeof node.remove === 'function') node.remove();
+                else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+                removed += 1;
+            });
+        } catch (error) {}
+        diagnostic('shots.enforce', {
+            reason: reason || '',
+            removedNodes: removed,
+            guard: clone(window.__LMUI_SHOTS_STATE__ || {})
+        });
+    }
+
     function destructiveCleanup() {
         if (boolValue(storageGet(CLEANUP_KEY, false), false)) return;
         storageSet('lpersonal_profile_v1', '');
@@ -2360,6 +3468,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         if (!Lampa.Listener || typeof Lampa.Listener.follow !== 'function') return;
         Lampa.Listener.follow('activity', function (event) {
             if (!event) return;
+            diagnostic('activity.event', { type: event.type, component: event.component || '', controller: diagnosticController() });
             if (event.type === 'start' || event.type === 'create') {
                 setTimeout(function () {
                     observeActiveActivity();
@@ -2367,13 +3476,19 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                     if (event.component === 'main') {
                         restoreFocus();
                         probeHomeData();
+                        if (activeModernMain && typeof activeModernMain.recoverFocus === 'function') activeModernMain.recoverFocus('activity-' + event.type);
                     }
-                    if (event.component === 'settings') scheduleSettingsCleanup();
+                    if (event.component === 'settings') scheduleSettingsCleanupBurst();
+                    enforceShotsOff('activity-' + (event.component || 'unknown'));
                 }, 60);
             }
             if (event.type === 'archive') scheduleDecorate();
         });
-        Lampa.Listener.follow('resize_end', function () { applyTheme(); scheduleDecorate(); });
+        Lampa.Listener.follow('resize_end', function () {
+            applyTheme();
+            scheduleDecorate();
+            diagnostic('layout.resize', { layout: detectLayoutMode(), height: detectHeightMode(), viewport: layoutViewport() });
+        });
         Lampa.Listener.follow('full', function (event) {
             if (!event) return;
             if (event.type === 'start') {
@@ -2389,10 +3504,20 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         });
         Lampa.Listener.follow('timeline', function () { scheduleHomeRefresh('timeline', 120); });
         Lampa.Listener.follow('app', function (event) {
-            if (event && event.type === 'ready') scheduleSettingsCleanup(50);
+            if (event && event.type === 'ready') {
+                diagnostic('app.ready', diagnosticSnapshot());
+                enforceShotsOff('app-ready');
+                installSettingsGuard();
+                scheduleSettingsCleanupBurst();
+                installSearchHooks();
+            }
         });
         if (Lampa.Settings && Lampa.Settings.listener && typeof Lampa.Settings.listener.follow === 'function') {
-            Lampa.Settings.listener.follow('open', function () { scheduleSettingsCleanup(); });
+            Lampa.Settings.listener.follow('open', function (event) {
+                diagnostic('settings.open', { name: event && event.name || '', controller: diagnosticController() });
+                if (event && event.body && event.body[0]) removeHiddenSettingsDom(event.body[0]);
+                scheduleSettingsCleanupBurst();
+            });
         }
     }
 
@@ -2407,17 +3532,31 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             return;
         }
         window[READY_FLAG] = true;
+        exposeDiagnostics();
+        diagnostic('start.begin', {
+            userAgent: window.navigator && window.navigator.userAgent || '',
+            viewport: layoutViewport(),
+            platformTv: !!(Lampa.Platform && typeof Lampa.Platform.screen === 'function' && Lampa.Platform.screen('tv')),
+            mouseClass: !!(document.body && document.body.classList.contains('mouse--controll'))
+        });
         destructiveCleanup();
         injectStyle();
+        enforceShotsOff('start');
+        installSettingsGuard();
         removeHiddenSettingsComponents();
         try { if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('lampa_personal'); } catch (error) {}
         addSettings();
+        removeHiddenSettingsComponents();
         registerMainComponent();
         applyTheme();
+        installControllerDiagnostics();
         installInteractionHandlers();
         installInputModeListeners();
+        installSearchHooks();
+        observeSettingsDom();
         followEvents();
         observeActiveActivity();
+        scheduleSettingsCleanupBurst();
         scheduleDecorate();
         resetRecommendationProbe();
         lastHomeSignature = homeSignature();
@@ -2429,11 +3568,17 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 homeSignature: homeSignature,
                 visibleRowsForMode: visibleRowsForMode,
                 customHomeEnabled: customHomeEnabled,
-                componentRegistered: function () { return mainComponentRegistered; }
+                componentRegistered: function () { return mainComponentRegistered; },
+                removeHiddenSettingsDom: removeHiddenSettingsDom,
+                removeHiddenSettingsComponents: removeHiddenSettingsComponents,
+                optimizeSearchSources: optimizeSearchSources,
+                decorateSearch: decorateSearch,
+                diagnosticSnapshot: diagnosticSnapshot,
+                enforceShotsOff: enforceShotsOff
             };
         }
         window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
-        console.info('[Lampa Modern UI] v' + VERSION + ' loaded');
+        diagnostic('start.ready', diagnosticSnapshot());
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
