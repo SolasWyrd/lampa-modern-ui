@@ -1,14 +1,14 @@
-/* Lampa Modern UI 0.9.0
+/* Lampa Modern UI 0.9.1
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.9.0';
+    var VERSION = '0.9.1';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v090_ready__';
+    var READY_FLAG = '__lampa_modern_ui_v091_ready__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
@@ -21,10 +21,18 @@
     var lastMainRefreshAt = 0;
     var lastHomeSignature = '';
     var dataProbeAttempts = 0;
+    var dataProbeStartedAt = 0;
+    var recommendationProbeDone = false;
     var focusState = null;
     var homeRow = null;
     var searchTimer = 0;
+    var settingsCleanupTimer = 0;
+    var duplicateTimer = 0;
+    var pendingDecorateRoots = [];
     var inputListenersInstalled = false;
+    var lastInputMode = '';
+    var detailNeedsInitialFocus = false;
+    var detailUserInteracted = false;
 
     var KEYS = {
         enabled: 'lmui_enabled',
@@ -887,9 +895,17 @@ body.lampa-modern-ui .activity--active.lmui-detail-series .season-episode {
     min-width: min(31em, 72vw);
 }
 
-/* Input is separate from viewport layout. */
+/* Input mode is independent from viewport layout. */
 body.lampa-modern-ui.lmui-input-pointer .card.hover:not(.focus) {
     transform: translateY(-0.05em) scale(1.012);
+}
+
+body.lampa-modern-ui.lmui-input-keyboard .card.focus {
+    transform: translateY(-0.09em) scale(1.026);
+}
+
+body.lampa-modern-ui.lmui-input-keyboard .card.focus .card__view {
+    box-shadow: 0 0 0 0.11em var(--lmui-accent), 0 0 0 0.24em rgba(105, 167, 255, 0.22), 0 0.9em 2.2em rgba(0, 0, 0, 0.4);
 }
 
 body.lampa-modern-ui.lmui-input-remote .card.focus {
@@ -900,201 +916,196 @@ body.lampa-modern-ui.lmui-input-remote .card.focus .card__view {
     box-shadow: 0 0 0 0.14em var(--lmui-accent), 0 0 0 0.3em rgba(105, 167, 255, 0.26), 0 1.3em 3.1em rgba(0, 0, 0, 0.5);
 }
 
-/* TV input (legacy class fallback) */
-body.lampa-modern-ui.lmui-device-tv .card.focus {
-    transform: translateY(-0.16em) scale(1.052);
-}
-
-body.lampa-modern-ui.lmui-device-tv .card.focus .card__view {
-    box-shadow: 0 0 0 0.14em var(--lmui-accent), 0 0 0 0.3em rgba(105, 167, 255, 0.26), 0 1.3em 3.1em rgba(0, 0, 0, 0.5);
-}
-
-body.lampa-modern-ui.lmui-device-tv .menu__item,
-body.lampa-modern-ui.lmui-device-tv .settings-folder,
-body.lampa-modern-ui.lmui-device-tv .settings-param,
-body.lampa-modern-ui.lmui-device-tv .selectbox-item {
+body.lampa-modern-ui.lmui-input-remote .menu__item,
+body.lampa-modern-ui.lmui-input-remote .settings-folder,
+body.lampa-modern-ui.lmui-input-remote .settings-param,
+body.lampa-modern-ui.lmui-input-remote .selectbox-item {
     min-height: 3.2em;
 }
 
-/* Tablet: independent composition, not a squeezed desktop. */
-@media screen and (min-width: 721px) and (max-width: 1100px) {
-    body.lampa-modern-ui {
-        --lmui-gutter: clamp(0.95em, 2.6vw, 1.7em);
-        --lmui-display: clamp(2.15em, 5.2vw, 3.55em);
-    }
-
-    body.lampa-modern-ui .full-start-new__left {
-        width: min(31vw, 17em);
-        margin-right: clamp(1.2em, 2.5vw, 2em);
-    }
-
-    body.lampa-modern-ui .full-start-new__right {
-        max-width: calc(100vw - 21em);
-    }
-
-    body.lampa-modern-ui .full-start-new__title {
-        max-width: 18ch;
-    }
-
-    body.lampa-modern-ui .full-start-new__description {
-        max-width: 54ch;
-        -webkit-line-clamp: 6;
-        line-clamp: 6;
-    }
-
-    body.lampa-modern-ui .full-start-new__buttons {
-        flex-wrap: wrap;
-    }
-
-    body.lampa-modern-ui .settings__content,
-    body.lampa-modern-ui .selectbox__content,
-    body.lampa-modern-ui .modal__content {
-        width: min(88vw, 52em);
-        max-height: 86vh;
-    }
-
-    body.lampa-modern-ui .lmui-row-continue .card {
-        width: min(39vw, 20em) !important;
-        min-width: 15em;
-    }
+body.lampa-modern-ui.lmui-height-compact {
+    --lmui-display: clamp(2.05em, 3.8vw, 3.8em);
 }
 
-/* Phone */
-@media screen and (max-width: 720px) {
-    body.lampa-modern-ui {
-        --lmui-radius-md: 0.86em;
-        --lmui-radius-lg: 1.15em;
-        --lmui-gutter: max(0.75em, env(safe-area-inset-left));
-        --lmui-display: clamp(2em, 9.5vw, 3.1em);
-        --lmui-heading: clamp(1.45em, 6vw, 2em);
-        --lmui-section: clamp(1.12em, 4.8vw, 1.4em);
-        --lmui-body: clamp(0.96em, 3.9vw, 1.08em);
-    }
-
-    body.lampa-modern-ui::before {
-        background: linear-gradient(160deg, #0d1320, #070a10 58%, #04060a);
-    }
-
-    body.lampa-modern-ui .wrap__content,
-    body.lampa-modern-ui .activity__body {
-        padding-left: max(0.72em, env(safe-area-inset-left));
-        padding-right: max(0.72em, env(safe-area-inset-right));
-    }
-
-    body.lampa-modern-ui .head__body {
-        padding-top: 0.42em;
-        padding-bottom: 0.48em;
-    }
-
-    body.lampa-modern-ui .head__title {
-        font-size: 1.35em;
-    }
-
-    body.lampa-modern-ui .head__action {
-        width: 2.7em;
-        height: 2.7em;
-    }
-
-    body.lampa-modern-ui .items-line__head {
-        min-height: 2.55em;
-        margin-bottom: 0.1em;
-    }
-
-    body.lampa-modern-ui .card:not(.card--wide):not(.card--collection):not(.card--category) {
-        width: min(42vw, 11.2em);
-        min-width: 8.5em;
-    }
-
-    body.lampa-modern-ui.lmui-density-compact .card:not(.card--wide):not(.card--collection):not(.card--category) {
-        width: min(37vw, 9.8em);
-        min-width: 7.7em;
-    }
-
-    body.lampa-modern-ui .lmui-row-continue .card {
-        width: min(76vw, 20em) !important;
-        min-width: 14.5em;
-    }
-
-    body.lampa-modern-ui .card.focus,
-    body.lampa-modern-ui .card.hover {
-        transform: none;
-    }
-
-    body.lampa-modern-ui .card.focus .card__view,
-    body.lampa-modern-ui .card.hover .card__view {
-        box-shadow: var(--lmui-focus-ring), 0 0.75em 1.8em rgba(0, 0, 0, 0.35);
-    }
-
-    body.lampa-modern-ui .full-start-new {
-        padding-bottom: 2em;
-    }
-
-    body.lampa-modern-ui .full-start-new__right {
-        width: 100%;
-        padding-top: 1.25em;
-        background: linear-gradient(180deg, transparent, rgba(7, 10, 16, 0.96) 14%);
-    }
-
-    body.lampa-modern-ui .full-start-new__title {
-        max-width: 100%;
-        -webkit-line-clamp: 3;
-        line-clamp: 3;
-    }
-
-    body.lampa-modern-ui .full-start-new__description {
-        max-width: 100%;
-        -webkit-line-clamp: 5;
-        line-clamp: 5;
-    }
-
-    body.lampa-modern-ui .full-start-new__buttons {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.5em;
-        overflow: visible;
-    }
-
-    body.lampa-modern-ui .full-start-new__buttons .full-start__button {
-        width: 100%;
-        min-height: 3.15em;
-        margin: 0;
-        justify-content: center;
-    }
-
-    body.lampa-modern-ui .full-start-new__buttons .full-start__button.lmui-primary-action {
-        grid-column: 1 / -1;
-    }
-
-    body.lampa-modern-ui .search-box {
-        width: 100%;
-    }
-
-    body.lampa-modern-ui .settings,
-    body.lampa-modern-ui .selectbox,
-    body.lampa-modern-ui .modal {
-        align-items: flex-end;
-    }
-
-    body.lampa-modern-ui .settings__content,
-    body.lampa-modern-ui .selectbox__content,
-    body.lampa-modern-ui .modal__content {
-        width: 100%;
-        max-height: min(88vh, 54em);
-        margin: 0;
-        border-right: 0;
-        border-bottom: 0;
-        border-left: 0;
-        border-radius: 1.2em 1.2em 0 0;
-    }
-
-    body.lampa-modern-ui .simple-keyboard {
-        border-right: 0;
-        border-bottom: 0;
-        border-left: 0;
-        border-radius: 1.15em 1.15em 0 0;
-    }
+body.lampa-modern-ui.lmui-height-compact .full-start-new {
+    min-height: calc(100vh - 5.4em);
+    padding-bottom: 2.4em;
 }
 
+/* Tablet: based on the real Lampa content width, not browser window width. */
+body.lampa-modern-ui.lmui-layout-tablet {
+    --lmui-gutter: clamp(0.95em, 2.6vw, 1.7em);
+    --lmui-display: clamp(2.15em, 5.2vw, 3.55em);
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .full-start-new__left {
+    width: min(31vw, 17em);
+    margin-right: clamp(1.2em, 2.5vw, 2em);
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .full-start-new__right {
+    max-width: calc(100vw - 21em);
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .full-start-new__title {
+    max-width: 18ch;
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .full-start-new__description {
+    max-width: 54ch;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .full-start-new__buttons {
+    flex-wrap: wrap;
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .settings__content,
+body.lampa-modern-ui.lmui-layout-tablet .selectbox__content,
+body.lampa-modern-ui.lmui-layout-tablet .modal__content {
+    width: min(88vw, 52em);
+    max-height: 86vh;
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .lmui-row-continue .card {
+    width: min(39vw, 20em) !important;
+    min-width: 15em;
+}
+
+/* Phone: the class is derived from the actual Lampa content width. */
+body.lampa-modern-ui.lmui-layout-phone {
+    --lmui-radius-md: 0.86em;
+    --lmui-radius-lg: 1.15em;
+    --lmui-gutter: max(0.75em, env(safe-area-inset-left));
+    --lmui-display: clamp(2em, 9.5vw, 3.1em);
+    --lmui-heading: clamp(1.45em, 6vw, 2em);
+    --lmui-section: clamp(1.12em, 4.8vw, 1.4em);
+    --lmui-body: clamp(0.96em, 3.9vw, 1.08em);
+}
+
+body.lampa-modern-ui.lmui-layout-phone::before {
+    background: linear-gradient(160deg, #0d1320, #070a10 58%, #04060a);
+}
+
+body.lampa-modern-ui.lmui-layout-phone .wrap__content,
+body.lampa-modern-ui.lmui-layout-phone .activity__body {
+    padding-left: max(0.72em, env(safe-area-inset-left));
+    padding-right: max(0.72em, env(safe-area-inset-right));
+}
+
+body.lampa-modern-ui.lmui-layout-phone .head__body {
+    padding-top: 0.42em;
+    padding-bottom: 0.48em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .head__title {
+    font-size: 1.35em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .head__action {
+    width: 2.7em;
+    height: 2.7em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .items-line__head {
+    min-height: 2.55em;
+    margin-bottom: 0.1em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .card:not(.card--wide):not(.card--collection):not(.card--category) {
+    width: min(42vw, 11.2em);
+    min-width: 8.5em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone.lmui-density-compact .card:not(.card--wide):not(.card--collection):not(.card--category) {
+    width: min(37vw, 9.8em);
+    min-width: 7.7em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .lmui-row-continue .card {
+    width: min(76vw, 20em) !important;
+    min-width: 14.5em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .card.focus,
+body.lampa-modern-ui.lmui-layout-phone .card.hover {
+    transform: none;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .card.focus .card__view,
+body.lampa-modern-ui.lmui-layout-phone .card.hover .card__view {
+    box-shadow: var(--lmui-focus-ring), 0 0.75em 1.8em rgba(0, 0, 0, 0.35);
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new {
+    padding-bottom: 2em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__right {
+    width: 100%;
+    padding-top: 1.25em;
+    background: linear-gradient(180deg, transparent, rgba(7, 10, 16, 0.96) 14%);
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__title {
+    max-width: 100%;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__description {
+    max-width: 100%;
+    -webkit-line-clamp: 5;
+    line-clamp: 5;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5em;
+    overflow: visible;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__buttons .full-start__button {
+    width: 100%;
+    min-height: 3.15em;
+    margin: 0;
+    justify-content: center;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__buttons .full-start__button.lmui-primary-action {
+    grid-column: 1 / -1;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .search-box {
+    width: 100%;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .settings,
+body.lampa-modern-ui.lmui-layout-phone .selectbox,
+body.lampa-modern-ui.lmui-layout-phone .modal {
+    align-items: flex-end;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .settings__content,
+body.lampa-modern-ui.lmui-layout-phone .selectbox__content,
+body.lampa-modern-ui.lmui-layout-phone .modal__content {
+    width: 100%;
+    max-height: min(88vh, 54em);
+    margin: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 1.2em 1.2em 0 0;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 1.15em 1.15em 0 0;
+}
 
 @media (prefers-reduced-motion: reduce) {
     body.lampa-modern-ui,
@@ -1248,10 +1259,13 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     function recommendationCards() {
         try {
             if (!window.Lampa || !Lampa.Recomends || typeof Lampa.Recomends.get !== 'function') {
-                return { status: 'loading', results: [] };
+                return recommendationProbeDone
+                    ? { status: 'error', results: [], error: new Error('Recomends API unavailable') }
+                    : { status: 'loading', results: [] };
             }
             var cards = dedupeCards(asArray(Lampa.Recomends.get('movie')).concat(asArray(Lampa.Recomends.get('tv')))).slice(0, 20);
-            return { status: cards.length ? 'ready' : 'loading', results: tagCards(cards, 'recommendations') };
+            if (cards.length) return { status: 'ready', results: tagCards(cards, 'recommendations') };
+            return { status: recommendationProbeDone ? 'empty' : 'loading', results: [] };
         } catch (error) {
             return { status: 'error', results: [], error: error };
         }
@@ -1282,10 +1296,13 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     function rowPayload(rowId, state) {
         if (state.status === 'ready') return state.results;
         if (state.status === 'loading' && rowId === 'recommendations') {
-            return [stateCard(rowId, 'loading', 'Подбираем рекомендации', 'Строка появится автоматически, когда Lampa завершит расчёт.')];
+            return [stateCard(rowId, 'loading', 'Подбираем рекомендации', 'Lampa ещё формирует подборку.')];
+        }
+        if (state.status === 'empty' && rowId === 'recommendations') {
+            return [stateCard(rowId, 'empty', 'Пока нет рекомендаций', 'Откройте или добавьте несколько фильмов и сериалов — подборка появится позже.')];
         }
         if (state.status === 'error') {
-            return [stateCard(rowId, 'error', 'Не удалось загрузить раздел', 'Нажмите, чтобы повторить.')];
+            return [stateCard(rowId, 'error', 'Не удалось загрузить раздел', 'Нажмите, чтобы повторить чтение данных.')];
         }
         return [];
     }
@@ -1309,10 +1326,19 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         });
     }
 
+    function stateSignature(id, state) {
+        var ids = asArray(state && state.results).filter(function (card) {
+            return card && !card.lmui_state;
+        }).slice(0, 6).map(function (card) {
+            return card.lmui_content_id || contentId(card);
+        }).filter(Boolean);
+        return id + ':' + state.status + ':' + state.results.length + ':' + ids.join(',');
+    }
+
     function homeSignature() {
         var data = readHomeData();
         return HOME_ORDER.map(function (id) {
-            return id + ':' + data[id].status + ':' + data[id].results.length;
+            return stateSignature(id, data[id]);
         }).join('|');
     }
 
@@ -1356,7 +1382,11 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
                 var active = activeActivity();
                 if (!active || active.component !== 'main' || !Lampa.Activity || typeof Lampa.Activity.refresh !== 'function') return;
                 var timestamp = Date.now ? Date.now() : new Date().getTime();
-                if (timestamp - lastMainRefreshAt < 700) return;
+                var elapsed = timestamp - lastMainRefreshAt;
+                if (elapsed < 700) {
+                    scheduleHomeRefresh(reason || 'throttled-update', 720 - elapsed);
+                    return;
+                }
                 lastMainRefreshAt = timestamp;
                 Lampa.Activity.refresh(false);
             } catch (error) {
@@ -1365,13 +1395,32 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         }, typeof delay === 'number' ? delay : 180);
     }
 
+    function resetRecommendationProbe() {
+        clearTimeout(dataProbeTimer);
+        dataProbeAttempts = 0;
+        dataProbeStartedAt = Date.now ? Date.now() : new Date().getTime();
+        recommendationProbeDone = false;
+    }
+
     function probeHomeData() {
         clearTimeout(dataProbeTimer);
+        if (!dataProbeStartedAt) dataProbeStartedAt = Date.now ? Date.now() : new Date().getTime();
         var signature = homeSignature();
+        var recommendationsLoading = signature.indexOf('recommendations:loading') >= 0;
+        var timestamp = Date.now ? Date.now() : new Date().getTime();
+        var timedOut = timestamp - dataProbeStartedAt >= 10000;
+
+        if (recommendationsLoading && (dataProbeAttempts >= 11 || timedOut)) {
+            recommendationProbeDone = true;
+            signature = homeSignature();
+            recommendationsLoading = false;
+        }
+
         if (lastHomeSignature && signature !== lastHomeSignature) scheduleHomeRefresh('home-data-ready', 50);
         lastHomeSignature = signature;
         dataProbeAttempts += 1;
-        if (dataProbeAttempts < 12 && signature.indexOf('recommendations:loading') >= 0) {
+
+        if (recommendationsLoading) {
             dataProbeTimer = setTimeout(probeHomeData, Math.min(1600, 250 + dataProbeAttempts * 120));
         }
     }
@@ -1388,40 +1437,53 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
 
     function detectLayoutMode() {
         var viewport = layoutViewport();
-        var shortest = Math.min(viewport.width, viewport.height);
-        if (shortest <= 600) return 'phone';
-        if (viewport.width <= 1100 || shortest <= 900) return 'tablet';
+        if (viewport.width <= 720) return 'phone';
+        if (viewport.width <= 1100) return 'tablet';
         return 'desktop';
+    }
+
+    function detectHeightMode() {
+        var viewport = layoutViewport();
+        return viewport.height > 0 && viewport.height <= 760 ? 'compact' : 'normal';
+    }
+
+    function pointerEnvironment() {
+        var body = document.body;
+        var hover = false;
+        var fine = false;
+        try {
+            hover = !!(window.matchMedia && window.matchMedia('(hover: hover)').matches);
+            fine = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
+        } catch (error) {}
+        return !!(body && (body.classList.contains('mouse--controll') || body.classList.contains('mouse--control'))) || (hover && fine);
+    }
+
+    function remoteEnvironment() {
+        var body = document.body;
+        if (!body) return false;
+        if (body.classList.contains('platform--browser')) return false;
+        if (body.classList.contains('platform--tv') || body.classList.contains('platform--tizen') || body.classList.contains('platform--webos')) return true;
+        if (body.classList.contains('platform--android') && Number(window.navigator && window.navigator.maxTouchPoints || 0) === 0) return true;
+        return false;
     }
 
     function detectInputMode() {
         var body = document.body;
         var touch = Number(window.navigator && window.navigator.maxTouchPoints || 0);
         var coarse = false;
-        var hover = false;
-        var fine = false;
-        try {
-            coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-            hover = !!(window.matchMedia && window.matchMedia('(hover: hover)').matches);
-            fine = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
-        } catch (error) {}
+        try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+        catch (error) {}
 
-        /* Lampa может считать desktop-браузер TV. Явный текущий способ ввода
-         * важнее платформенной эвристики: mouse--controll означает pointer. */
-        if (body && (body.classList.contains('mouse--controll') || body.classList.contains('mouse--control'))) return 'pointer';
         if (body && (body.classList.contains('touch--controll') || body.classList.contains('touch--control'))) return 'touch';
-        if (!touch && hover && fine) return 'pointer';
+        if (pointerEnvironment()) return 'pointer';
         if (touch > 0 || coarse) return 'touch';
-        if (body && (body.classList.contains('platform--tv') || body.classList.contains('tv'))) return 'remote';
-        try {
-            if (window.Lampa && Lampa.Platform && typeof Lampa.Platform.screen === 'function' && Lampa.Platform.screen('tv')) return 'remote';
-        } catch (error) {}
-        return hover ? 'pointer' : 'remote';
+        if (remoteEnvironment()) return 'remote';
+        return 'keyboard';
     }
 
     function removeThemeClasses(body) {
         Array.prototype.slice.call(body.classList).forEach(function (name) {
-            if (name === 'lampa-modern-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0 || name.indexOf('lmui-layout-') === 0 || name.indexOf('lmui-input-') === 0) body.classList.remove(name);
+            if (name === 'lampa-modern-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0 || name.indexOf('lmui-layout-') === 0 || name.indexOf('lmui-input-') === 0 || name.indexOf('lmui-height-') === 0) body.classList.remove(name);
         });
     }
 
@@ -1437,8 +1499,10 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         if (motion !== 'calm' && motion !== 'minimal') motion = 'calm';
         if (performance !== 'standard' && performance !== 'lite') performance = 'standard';
         var layout = detectLayoutMode();
-        var input = detectInputMode();
-        body.classList.add('lampa-modern-ui', 'lmui-density-' + density, 'lmui-motion-' + motion, 'lmui-performance-' + performance, 'lmui-layout-' + layout, 'lmui-input-' + input, 'lmui-device-' + (input === 'remote' ? 'tv' : layout));
+        var heightMode = detectHeightMode();
+        var input = lastInputMode || detectInputMode();
+        lastInputMode = input;
+        body.classList.add('lampa-modern-ui', 'lmui-density-' + density, 'lmui-motion-' + motion, 'lmui-performance-' + performance, 'lmui-layout-' + layout, 'lmui-height-' + heightMode, 'lmui-input-' + input, 'lmui-device-' + layout);
     }
 
     function injectStyle() {
@@ -1453,12 +1517,33 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         document.head.appendChild(style);
     }
 
+    function hiddenSettingsId(id) {
+        var value = String(id || '').toLowerCase();
+        if (HIDDEN_COMPONENT_IDS.indexOf(value) >= 0) return true;
+        return /(^|_)(sync|synchronization|parental|remote_config|remote_configuration)(_|$)/.test(value);
+    }
+
     function removeHiddenSettingsComponents() {
         if (!Lampa.SettingsApi || typeof Lampa.SettingsApi.removeComponent !== 'function') return;
-        HIDDEN_COMPONENT_IDS.forEach(function (id) {
+        var ids = HIDDEN_COMPONENT_IDS.slice();
+        try {
+            if (typeof Lampa.SettingsApi.allComponents === 'function') {
+                Object.keys(Lampa.SettingsApi.allComponents() || {}).forEach(function (id) {
+                    if (hiddenSettingsId(id) && ids.indexOf(id) < 0) ids.push(id);
+                });
+            }
+        } catch (error) {
+            console.warn('[Lampa Modern UI] settings component discovery failed:', error);
+        }
+        ids.forEach(function (id) {
             try { Lampa.SettingsApi.removeComponent(id); }
             catch (error) { console.warn('[Lampa Modern UI] settings component removal failed:', id, error); }
         });
+    }
+
+    function scheduleSettingsCleanup(delay) {
+        clearTimeout(settingsCleanupTimer);
+        settingsCleanupTimer = setTimeout(removeHiddenSettingsComponents, typeof delay === 'number' ? delay : 0);
     }
 
     function cardData(card) {
@@ -1530,28 +1615,43 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         return matches / Math.min(a.length, b.length);
     }
 
-    function decorateHomeRows(root) {
+    function decorateHomeLine(line) {
+        if (!line || !line.querySelector) return '';
+        var rowId = rowIdFromLine(line);
+        line.classList.remove('lmui-row-continue', 'lmui-row-episodes', 'lmui-row-recommendations', 'lmui-row-watchlist', 'lmui-home-row', 'lmui-home-hidden');
+        if (!rowId) return '';
+        line.dataset.lmuiRow = rowId;
+        line.classList.add('lmui-home-row', 'lmui-row-' + rowId);
+        Array.prototype.slice.call(line.querySelectorAll('.card')).forEach(function (card) {
+            card.classList.remove('lmui-hero-card');
+            decorateStateCard(card);
+            if (rowId === 'continue') decorateContinueCard(card);
+            if (rowId === 'episodes') decorateEpisodeCard(card);
+            card.setAttribute('data-lmui-decorated', VERSION);
+        });
+        return rowId;
+    }
+
+    function reconcileHomeDuplicates() {
+        clearTimeout(duplicateTimer);
+        duplicateTimer = 0;
         if (activeComponent() !== 'main') return;
+        var activity = document.querySelector('.activity--active');
+        if (!activity) return;
         var customEnabled = boolValue(storageGet(KEYS.enabled, true), true) && boolValue(storageGet(KEYS.homeEnabled, true), true);
-        var lines = Array.prototype.slice.call((root || document).querySelectorAll('.items-line'));
+        var lines = Array.prototype.slice.call(activity.querySelectorAll('.items-line'));
         var customSets = {};
+
         lines.forEach(function (line) {
-            line.classList.remove('lmui-row-continue', 'lmui-row-episodes', 'lmui-row-recommendations', 'lmui-row-watchlist', 'lmui-home-row', 'lmui-home-duplicate', 'lmui-home-hidden');
+            line.classList.remove('lmui-home-duplicate');
             var rowId = rowIdFromLine(line);
             if (!rowId) return;
-            line.dataset.lmuiRow = rowId;
-            line.classList.add('lmui-home-row', 'lmui-row-' + rowId);
-            var ids = [];
-            Array.prototype.slice.call(line.querySelectorAll('.card')).forEach(function (card) {
-                card.classList.remove('lmui-hero-card');
-                decorateStateCard(card);
-                if (rowId === 'continue') decorateContinueCard(card);
-                if (rowId === 'episodes') decorateEpisodeCard(card);
+            customSets[rowId] = Array.prototype.slice.call(line.querySelectorAll('.card')).map(function (card) {
                 var data = cardData(card);
-                if (data && data.lmui_content_id && !data.lmui_state) ids.push(data.lmui_content_id);
-            });
-            customSets[rowId] = ids;
+                return data && data.lmui_content_id && !data.lmui_state ? data.lmui_content_id : '';
+            }).filter(Boolean).slice(0, 8);
         });
+
         if (!customEnabled) return;
         lines.forEach(function (line) {
             if (rowIdFromLine(line)) return;
@@ -1560,10 +1660,32 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
             }).filter(Boolean).slice(0, 8);
             if (ids.length < 3) return;
             var duplicate = Object.keys(customSets).some(function (rowId) {
-                return customSets[rowId].length >= 3 && overlapRatio(customSets[rowId].slice(0, 8), ids) >= 0.6;
+                return customSets[rowId].length >= 3 && overlapRatio(customSets[rowId], ids) >= 0.6;
             });
             if (duplicate) line.classList.add('lmui-home-duplicate');
         });
+    }
+
+    function scheduleDuplicateReconcile() {
+        clearTimeout(duplicateTimer);
+        duplicateTimer = setTimeout(reconcileHomeDuplicates, 60);
+    }
+
+    function decorateHomeRows(root) {
+        if (activeComponent() !== 'main') return;
+        var scope = root || document.querySelector('.activity--active');
+        if (!scope || !scope.querySelectorAll) return;
+        var lines = [];
+        if (scope.matches && scope.matches('.items-line')) lines.push(scope);
+        else {
+            var parentLine = scope.closest && scope.closest('.items-line');
+            if (parentLine) lines.push(parentLine);
+            Array.prototype.slice.call(scope.querySelectorAll('.items-line')).forEach(function (line) {
+                if (lines.indexOf(line) < 0) lines.push(line);
+            });
+        }
+        lines.forEach(decorateHomeLine);
+        if (lines.length) scheduleDuplicateReconcile();
     }
 
     function decoratePrimaryAction(root) {
@@ -1575,6 +1697,19 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         var play = searchScope.querySelector('.full-start-new__buttons .button--play:not(.hide)');
         var button = priority || play;
         if (button) button.classList.add('lmui-primary-action');
+        return button;
+    }
+
+    function tryFocusPrimaryAction(activity) {
+        if (!detailNeedsInitialFocus || detailUserInteracted || activeComponent() !== 'full') return;
+        var button = activity && activity.querySelector('.full-start-new__buttons .lmui-primary-action');
+        if (!button || !window.$ || !Lampa.Controller || typeof Lampa.Controller.collectionFocus !== 'function') return;
+        try {
+            Lampa.Controller.collectionFocus($(button), $(activity), true);
+            detailNeedsInitialFocus = false;
+        } catch (error) {
+            console.warn('[Lampa Modern UI] primary focus failed:', error);
+        }
     }
 
     function decorateDetail(root) {
@@ -1587,6 +1722,7 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         var card = active && (active.card || active.object && active.object.card || active.object);
         if (mediaType(card) === 'tv') activity.classList.add('lmui-detail-series');
         decoratePrimaryAction(activity);
+        tryFocusPrimaryAction(activity);
     }
 
     function searchRoot() {
@@ -1602,9 +1738,10 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
             if (!screen) return;
             screen.classList.add('lmui-search-screen');
             var input = root.querySelector('input, .search__input, .simple-keyboard-input');
-            var query = String(input && (input.value !== undefined ? input.value : input.textContent) || '').trim();
-            var results = screen.querySelectorAll('.card, .search-item, .explorer-card').length;
-            var loading = !!screen.querySelector('.search-looking, .content-loading, .loading-layer');
+            var query = String(input && (input.value !== undefined ? input.value : input.textContent) || '').replace(/ /g, ' ').trim();
+            var resultsRoot = root.querySelector('.search__results') || screen.querySelector('.search__results');
+            var results = resultsRoot ? resultsRoot.querySelectorAll('.card, .search-item, .explorer-card').length : 0;
+            var loading = !!screen.querySelector('.search-source--loading, .search-looking, .content-loading, .loading-layer');
             var state = query ? (loading ? 'active' : results ? 'results' : 'empty') : 'landing';
             screen.setAttribute('data-lmui-search-state', state);
             var hint = screen.querySelector('.lmui-search-hint');
@@ -1614,24 +1751,38 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
                 root.insertAdjacentElement('afterend', hint);
             }
             if (state === 'empty') hint.innerHTML = '<strong>Ничего не найдено</strong>Проверьте название или переключите источник.';
-            else hint.innerHTML = '<strong>Поиск фильмов и сериалов</strong>Введите название. Недавние запросы и источники останутся рядом с полем.';
-        }, 120);
+            else hint.innerHTML = '<strong>Поиск фильмов и сериалов</strong>Введите название. История и источники доступны рядом с полем.';
+        }, 80);
     }
 
     function decorateNode(root) {
         if (!root || root.nodeType !== 1) return;
-        if (activeComponent() === 'main') decorateHomeRows(root.closest && root.closest('.activity--active') || root);
-        if (activeComponent() === 'full') decorateDetail(root.closest && root.closest('.activity--active') || root);
-        if (activeComponent() === 'search' || root.closest && root.closest('.search, .search-box')) decorateSearch();
+        var component = activeComponent();
+        if (component === 'main') decorateHomeRows(root);
+        if (component === 'full') decorateDetail(root.closest && root.closest('.activity--active') || document.querySelector('.activity--active'));
+        if (component === 'search' || root.closest && root.closest('.search, .search-box') || root.querySelector && root.querySelector('.search, .search-box')) decorateSearch();
+        if (component === 'settings') scheduleSettingsCleanup();
+    }
+
+    function queueDecorateRoot(root) {
+        if (!root || root.nodeType !== 1) return;
+        if (pendingDecorateRoots.indexOf(root) < 0) pendingDecorateRoots.push(root);
     }
 
     function scheduleDecorate(root) {
+        if (root) queueDecorateRoot(root);
         if (decorateTimer) return;
-        decorateTimer = setTimeout(function () {
+        var run = function () {
             decorateTimer = 0;
-            var activity = document.querySelector('.activity--active');
-            decorateNode(root || activity || document.body);
-        }, 0);
+            var roots = pendingDecorateRoots.splice(0, pendingDecorateRoots.length);
+            if (!roots.length) {
+                var activity = document.querySelector('.activity--active');
+                if (activity) roots.push(activity);
+            }
+            roots.forEach(decorateNode);
+        };
+        if (window.requestAnimationFrame) decorateTimer = window.requestAnimationFrame(run);
+        else decorateTimer = setTimeout(run, 0);
     }
 
     function observeActiveActivity() {
@@ -1650,17 +1801,63 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         scheduleDecorate(root);
     }
 
+    function horizontalScroll(card) {
+        return card && card.closest ? card.closest('.scroll--horizontal') : null;
+    }
+
+    function readScrollPosition(scroll) {
+        if (!scroll) return 0;
+        try {
+            if (scroll.Scroll && typeof scroll.Scroll.position === 'function') return Number(scroll.Scroll.position()) || 0;
+        } catch (error) {}
+        return Number(scroll.scrollLeft) || 0;
+    }
+
+    function writeScrollPosition(scroll, position) {
+        if (!scroll || typeof position !== 'number' || !isFinite(position)) return;
+        try {
+            if (scroll.Scroll && typeof scroll.Scroll.position === 'function' && typeof scroll.Scroll.shift === 'function') {
+                var current = Number(scroll.Scroll.position()) || 0;
+                scroll.Scroll.shift(current - position);
+                return;
+            }
+        } catch (error) {
+            console.warn('[Lampa Modern UI] scroll restore failed:', error);
+        }
+        scroll.scrollLeft = Math.max(0, position);
+    }
+
+    function cardVisibleInScroll(card, scroll) {
+        if (!card || !scroll || !card.getBoundingClientRect || !scroll.getBoundingClientRect) return true;
+        var cardRect = card.getBoundingClientRect();
+        var scrollRect = scroll.getBoundingClientRect();
+        return cardRect.right > scrollRect.left + 8 && cardRect.left < scrollRect.right - 8;
+    }
+
+    function ensureCardVisible(card, scroll) {
+        if (!card || !scroll || cardVisibleInScroll(card, scroll)) return;
+        try {
+            if (scroll.Scroll && typeof scroll.Scroll.immediate === 'function') {
+                scroll.Scroll.immediate(card, true);
+                return;
+            }
+        } catch (error) {}
+        var cardRect = card.getBoundingClientRect();
+        var scrollRect = scroll.getBoundingClientRect();
+        scroll.scrollLeft += cardRect.left - scrollRect.left - (scrollRect.width - cardRect.width) / 2;
+    }
+
     function focusedCardState(card) {
         var line = card && card.closest ? card.closest('.items-line') : null;
         var data = cardData(card);
         if (!line || !data) return null;
         var cards = Array.prototype.slice.call(line.querySelectorAll('.card'));
-        var scrollBody = card.parentElement;
+        var scroll = horizontalScroll(card);
         return {
             rowId: data.lmui_row_id || rowIdFromLine(line),
             contentId: data.lmui_content_id || contentId(data),
             fallbackIndex: Math.max(0, cards.indexOf(card)),
-            scrollLeft: scrollBody && typeof scrollBody.scrollLeft === 'number' ? scrollBody.scrollLeft : 0
+            scrollPosition: readScrollPosition(scroll)
         };
     }
 
@@ -1681,30 +1878,42 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
             return data && (data.lmui_content_id || contentId(data)) === focusState.contentId;
         })[0] || cards[Math.min(focusState.fallbackIndex || 0, Math.max(0, cards.length - 1))];
         if (!card) return;
-        if (card.parentElement && typeof card.parentElement.scrollLeft === 'number') card.parentElement.scrollLeft = focusState.scrollLeft || 0;
+        var scroll = horizontalScroll(card);
+        writeScrollPosition(scroll, focusState.scrollPosition || 0);
         try {
             if (window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') Lampa.Controller.collectionFocus($(card), $(line), true);
             else if (window.$) $(card).trigger('hover:focus');
         } catch (error) {
             console.warn('[Lampa Modern UI] focus restore failed:', error);
         }
-    }
-
-    function focusPrimaryAction() {
-        var button = document.querySelector('.activity--active .full-start-new__buttons .lmui-primary-action');
-        var activity = document.querySelector('.activity--active');
-        if (!button || !activity || !window.$ || !Lampa.Controller || typeof Lampa.Controller.collectionFocus !== 'function') return;
-        try { Lampa.Controller.collectionFocus($(button), $(activity), true); }
-        catch (error) { console.warn('[Lampa Modern UI] primary focus failed:', error); }
+        var finalize = function () {
+            if (cardVisibleInScroll(card, scroll)) writeScrollPosition(scroll, focusState.scrollPosition || 0);
+            ensureCardVisible(card, scroll);
+        };
+        if (window.requestAnimationFrame) window.requestAnimationFrame(finalize);
+        else setTimeout(finalize, 0);
     }
 
     function setInputModeClass(mode) {
         var body = document.body;
-        if (!body || ['pointer', 'touch', 'remote'].indexOf(mode) < 0) return;
-        ['lmui-input-pointer', 'lmui-input-touch', 'lmui-input-remote'].forEach(function (name) { body.classList.remove(name); });
+        if (!body || ['pointer', 'touch', 'keyboard', 'remote'].indexOf(mode) < 0) return;
+        if (lastInputMode === mode && body.classList.contains('lmui-input-' + mode)) return;
+        lastInputMode = mode;
+        if (!body.classList.contains('lampa-modern-ui')) return;
+        ['lmui-input-pointer', 'lmui-input-touch', 'lmui-input-keyboard', 'lmui-input-remote'].forEach(function (name) { body.classList.remove(name); });
         body.classList.add('lmui-input-' + mode);
-        ['lmui-device-tv', 'lmui-device-desktop', 'lmui-device-tablet', 'lmui-device-phone'].forEach(function (name) { body.classList.remove(name); });
-        body.classList.add('lmui-device-' + (mode === 'remote' ? 'tv' : detectLayoutMode()));
+    }
+
+    function markDetailInteraction() {
+        if (activeComponent() !== 'full') return;
+        detailUserInteracted = true;
+        detailNeedsInitialFocus = false;
+    }
+
+    function keyInputMode() {
+        if (remoteEnvironment() && lastInputMode !== 'pointer' && lastInputMode !== 'touch' && lastInputMode !== 'keyboard') return 'remote';
+        if (pointerEnvironment() || document.body && document.body.classList.contains('platform--browser')) return 'keyboard';
+        return lastInputMode === 'remote' ? 'remote' : 'keyboard';
     }
 
     function installInputModeListeners() {
@@ -1712,12 +1921,16 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         inputListenersInstalled = true;
         window.addEventListener('pointerdown', function (event) {
             setInputModeClass(event && event.pointerType === 'touch' ? 'touch' : 'pointer');
+            markDetailInteraction();
         }, { passive: true });
         window.addEventListener('mousemove', function () { setInputModeClass('pointer'); }, { passive: true });
-        window.addEventListener('touchstart', function () { setInputModeClass('touch'); }, { passive: true });
-        window.addEventListener('keydown', function (event) {
-            var key = event && event.key || '';
-            if (key.indexOf('Arrow') === 0 || key === 'Enter' || key === 'Escape') setInputModeClass('remote');
+        window.addEventListener('touchstart', function () {
+            setInputModeClass('touch');
+            markDetailInteraction();
+        }, { passive: true });
+        window.addEventListener('keydown', function () {
+            setInputModeClass(keyInputMode());
+            markDetailInteraction();
         }, { passive: true });
     }
 
@@ -1728,9 +1941,11 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
             $(document).on('hover:focus.lmui', '.activity--active .card', function () { rememberFocus(this); });
             $(document).on('hover:enter.lmui', '.activity--active .lmui-state-card', function (event) {
                 var data = cardData(this);
-                if (!data || data.lmui_state !== 'error') return;
+                if (!data || !data.lmui_state) return;
                 if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
-                dataProbeAttempts = 0;
+                if (event && event.preventDefault) event.preventDefault();
+                if (data.lmui_state !== 'error') return;
+                resetRecommendationProbe();
                 probeHomeData();
                 scheduleHomeRefresh('state-retry', 50);
             });
@@ -1772,7 +1987,11 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
                 setTimeout(function () {
                     observeActiveActivity();
                     scheduleDecorate();
-                    if (event.component === 'main') restoreFocus();
+                    if (event.component === 'main') {
+                        restoreFocus();
+                        probeHomeData();
+                    }
+                    if (event.component === 'settings') scheduleSettingsCleanup();
                 }, 60);
             }
             if (event.type === 'archive') scheduleDecorate();
@@ -1780,12 +1999,19 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         Lampa.Listener.follow('resize_end', function () { applyTheme(); scheduleDecorate(); });
         Lampa.Listener.follow('full', function (event) {
             if (!event) return;
-            if (event.type === 'start' || event.type === 'complite') {
-                scheduleDecorate(event.body && event.body[0]);
-                if (event.type === 'complite') setTimeout(focusPrimaryAction, 80);
+            if (event.type === 'start') {
+                detailNeedsInitialFocus = true;
+                detailUserInteracted = false;
             }
+            if (event.type === 'start' || event.type === 'complite') scheduleDecorate(event.body && event.body[0]);
         });
         Lampa.Listener.follow('favorite', function () { scheduleHomeRefresh('favorite'); });
+        Lampa.Listener.follow('app', function (event) {
+            if (event && event.type === 'ready') scheduleSettingsCleanup(50);
+        });
+        if (Lampa.Settings && Lampa.Settings.listener && typeof Lampa.Settings.listener.follow === 'function') {
+            Lampa.Settings.listener.follow('open', function () { scheduleSettingsCleanup(); });
+        }
     }
 
     function start() {
@@ -1811,7 +2037,7 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         followEvents();
         observeActiveActivity();
         scheduleDecorate();
-        dataProbeAttempts = 0;
+        resetRecommendationProbe();
         lastHomeSignature = homeSignature();
         probeHomeData();
         window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
