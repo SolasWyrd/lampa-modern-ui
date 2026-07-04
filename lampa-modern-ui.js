@@ -1,4 +1,4 @@
-/* Lampa Modern UI 0.13.0 — permanent Shots guard. */
+/* Lampa Modern UI 0.13.1 — permanent Shots guard. */
 (function () {
     'use strict';
 
@@ -239,14 +239,14 @@
     }
 })();
 
-/* Lampa Modern UI 0.13.0
+/* Lampa Modern UI 0.13.1
  * Единый UI-слой поверх штатной навигации Lampa.
  * Главная не подменяется: добавляется только нативный ряд продолжения просмотра.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.13.0';
+    var VERSION = '0.13.1';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
     var READY_FLAG = '__lampa_modern_ui_v0130_ready__';
@@ -1064,20 +1064,10 @@ body.lampa-modern-ui .simple-keyboard .hg-button {
     font-size: 0.94em;
 }
 
-body.lampa-modern-ui .simple-keyboard-buttons {
-    display: flex;
-    gap: 0.4em;
-    margin-top: 0.42em;
-}
-
+body.lampa-modern-ui .simple-keyboard-buttons,
 body.lampa-modern-ui .simple-keyboard-buttons__enter,
 body.lampa-modern-ui .simple-keyboard-buttons__cancel {
-    min-height: 2.65em;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5em 0.85em;
-    border-radius: 0.65em;
+    display: none !important;
 }
 
 body.lampa-modern-ui .lmui-search-summary,
@@ -1340,9 +1330,7 @@ body.lampa-modern-ui .simple-keyboard {
     background: #0d131d;
 }
 
-body.lampa-modern-ui .simple-keyboard .hg-button,
-body.lampa-modern-ui .simple-keyboard-buttons__enter,
-body.lampa-modern-ui .simple-keyboard-buttons__cancel {
+body.lampa-modern-ui .simple-keyboard .hg-button {
     border: 0.075em solid var(--lmui-border);
     border-radius: 0.68em;
     background: rgba(255, 255, 255, 0.05);
@@ -1351,9 +1339,7 @@ body.lampa-modern-ui .simple-keyboard-buttons__cancel {
 }
 
 body.lampa-modern-ui .simple-keyboard .hg-button.focus,
-body.lampa-modern-ui .simple-keyboard .hg-button.hg-activeButton,
-body.lampa-modern-ui .simple-keyboard-buttons__enter.focus,
-body.lampa-modern-ui .simple-keyboard-buttons__cancel.focus {
+body.lampa-modern-ui .simple-keyboard .hg-button.hg-activeButton {
     color: #fff;
     border-color: var(--lmui-accent);
     background: var(--lmui-accent-soft);
@@ -2987,6 +2973,23 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         });
     }
 
+    function removeSearchActionButtons(screen) {
+        if (!screen || !screen.querySelectorAll) return 0;
+        var removed = 0;
+        Array.prototype.slice.call(screen.querySelectorAll('.simple-keyboard-buttons')).forEach(function (node) {
+            if (!node || !node.parentNode) return;
+            node.parentNode.removeChild(node);
+            removed += 1;
+        });
+        Array.prototype.slice.call(screen.querySelectorAll('.simple-keyboard-buttons__enter, .simple-keyboard-buttons__cancel')).forEach(function (node) {
+            if (!node || !node.parentNode) return;
+            node.parentNode.removeChild(node);
+            removed += 1;
+        });
+        if (removed) diagnostic('search.actions.removed', { count: removed });
+        return removed;
+    }
+
     function decorateSearch() {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(function () {
@@ -2996,6 +2999,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             screen.classList.add('lmui-search-screen');
             removeLegacySearchChrome(screen);
+            removeSearchActionButtons(screen);
             var query = readSearchQuery(root);
             var rawCount = searchResultCount(screen);
             var count = query.length >= 3 ? rawCount : 0;
@@ -3030,6 +3034,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         var screen = searchScreen();
         if (!screen) return;
         if (searchObserver) searchObserver.disconnect();
+        removeSearchActionButtons(screen);
         searchObserver = new MutationObserver(function () { decorateSearch(); });
         searchObserver.observe(screen, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
         decorateSearch();
