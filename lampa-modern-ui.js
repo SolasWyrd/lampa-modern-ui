@@ -3,8 +3,8 @@
 
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v040_ready__';
-    var VERSION = '0.4.0';
+    var READY_FLAG = '__lampa_modern_ui_v041_ready__';
+    var VERSION = '0.4.1';
     var BACKUP_KEY = 'lmui_core_backup_v2';
     var LEGACY_BACKUP_KEY = 'lmui_core_backup_v1';
 
@@ -32,7 +32,7 @@
     };
 
     var CSS = String.raw`
-/* Lampa Modern UI 0.4.0
+/* Lampa Modern UI 0.4.1
  * Единый визуальный слой без изменения DOM, навигации, поиска и воспроизведения.
  * Акцент приглушён; стандартные рывковые keyframe-анимации Lampa заменены лёгкими переходами.
  * Дорогие blur/backdrop-filter не используются.
@@ -631,22 +631,16 @@ body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-trigger-en
     to { opacity: 1; }
 }
 
-@keyframes lmui-sheet-in {
-    from { opacity: 0.9; transform: translate3d(0, 0.35em, 0) scale(0.992); }
-    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-}
-
 body.lampa-modern-ui.advanced--animation:not(.no--animation) .activity:not(.activity--load) .activity__body,
 body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-opacity,
 body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-up-content {
     animation: lmui-page-in var(--lmui-page) ease-out both !important;
 }
 
-body.lampa-modern-ui.advanced--animation:not(.no--animation) .modal.animate .modal__content,
-body.lampa-modern-ui.advanced--animation:not(.no--animation) .selectbox.animate .selectbox__content,
-body.lampa-modern-ui.advanced--animation:not(.no--animation) .settings.animate .settings__content {
-    animation: lmui-sheet-in var(--lmui-page) var(--lmui-ease) both !important;
-}
+/* Не переопределяем animation/transform у settings, selectbox и modal.
+ * Lampa использует transform этих панелей как часть механизма открытия:
+ * desktop — body.settings--open/selectbox--open, mobile — штатные keyframes.
+ * Вмешательство сюда оставляет панель за правой/нижней границей экрана. */
 
 body.lampa-modern-ui .card,
 body.lampa-modern-ui .card__img,
@@ -1203,12 +1197,6 @@ body.lampa-modern-ui .explorer-card__head-img.focus {
         max-height: min(86vh, 52em);
         margin: 0;
         border-radius: 1.35em 1.35em 0 0;
-    }
-
-    body.lampa-modern-ui .modal.animate .modal__content,
-    body.lampa-modern-ui .selectbox.animate .selectbox__content,
-    body.lampa-modern-ui .settings.animate .settings__content {
-        animation-name: lmui-sheet-in !important;
     }
 
     body.lampa-modern-ui .navigation-bar__body {
