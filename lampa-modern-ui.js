@@ -1,23 +1,100 @@
+/* Lampa Modern UI 0.6.2 — early Shots guard.
+ * Prevents the queued Shots script from starting and filters later load attempts.
+ */
+(function () {
+    'use strict';
+
+    var KEY = 'lmui_disable_shots';
+    var FLAG = '__lmui_shots_guard_v1__';
+
+    function boolValue(value, fallback) {
+        if (value === undefined || value === null || value === '') return fallback;
+        if (value === false || value === 0 || value === '0' || value === 'false') return false;
+        if (value === true || value === 1 || value === '1' || value === 'true') return true;
+        return fallback;
+    }
+
+    function disabled() {
+        try {
+            if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.get === 'function') {
+                return boolValue(Lampa.Storage.get(KEY, true), true);
+            }
+        } catch (error) {}
+
+        try {
+            var raw = window.localStorage && window.localStorage.getItem(KEY);
+            if (raw === null || raw === undefined) return true;
+            try { raw = JSON.parse(raw); } catch (error) {}
+            return boolValue(raw, true);
+        } catch (error) {
+            return true;
+        }
+    }
+
+    function isShotsUrl(url) {
+        return /\/plugin\/shots(?:[?#]|$)/i.test(String(url || ''));
+    }
+
+    function install() {
+        if (!window.Lampa || !Lampa.Utils) return false;
+        if (window[FLAG] && window[FLAG].installed) return true;
+
+        function wrap(name) {
+            var original = Lampa.Utils[name];
+            if (typeof original !== 'function' || original.__lmuiShotsWrapped) return;
+
+            var wrapped = function (items, complete, error, success, showLogs) {
+                var list = Array.isArray(items) ? items.slice() : [];
+                if (disabled()) list = list.filter(function (url) { return !isShotsUrl(url); });
+
+                if (!list.length) {
+                    if (typeof complete === 'function') setTimeout(complete, 0);
+                    return;
+                }
+
+                return original.call(this, list, complete, error, success, showLogs);
+            };
+
+            wrapped.__lmuiShotsWrapped = true;
+            wrapped.__lmuiShotsOriginal = original;
+            Lampa.Utils[name] = wrapped;
+        }
+
+        wrap('putScript');
+        wrap('putScriptAsync');
+
+        if (disabled()) window.plugin_shots_ready = true;
+        window[FLAG] = {
+            installed: true,
+            disabled: disabled,
+            isShotsUrl: isShotsUrl
+        };
+        return true;
+    }
+
+    install();
+})();
+
 (function () {
     'use strict';
 
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v061_ready__';
-    var VERSION = '0.6.1';
+    var READY_FLAG = '__lampa_modern_ui_v062_ready__';
+    var VERSION = '0.6.2';
     var BACKUP_KEY = 'lmui_core_backup_v2';
     var LEGACY_BACKUP_KEY = 'lmui_core_backup_v1';
     var MIGRATION_KEY = 'lmui_migrated_v050';
 
     var KEYS = {
         enabled: 'lmui_enabled',
-        accent: 'lmui_accent',
         motion: 'lmui_motion',
         density: 'lmui_density',
         performance: 'lmui_performance',
         focus: 'lmui_focus',
         device: 'lmui_device',
-        home: 'lmui_home'
+        home: 'lmui_home',
+        disableShots: 'lmui_disable_shots'
     };
 
     /* Значения по умолчанию подтверждены HAR lampa.mx от 2026-07-04. */
@@ -35,16 +112,13 @@
     };
 
     var CSS = String.raw`
-/* Lampa Modern UI 0.6.1
- * Кинематографичная адаптивная тема без изменения логики Lampa.
+/* Lampa Modern UI 0.6.2
+ * Кинематографичная нейтральная адаптивная тема без изменения логики Lampa.
  * По умолчанию сохраняет штатные качественные эффекты; оптимизация включается только вручную.
  * Служебные transform/animation настроек, selectbox и modal не переопределяются.
  */
 
 body.lampa-modern-ui {
-    --lmui-accent: #72a7ff;
-    --lmui-accent-rgb: 114, 167, 255;
-    --lmui-accent-2: #8d78ff;
     --lmui-bg: #070910;
     --lmui-bg-elevated: #10141f;
     --lmui-surface: rgba(17, 21, 31, 0.97);
@@ -65,7 +139,7 @@ body.lampa-modern-ui {
     --lmui-ease: cubic-bezier(0.2, 0.72, 0.2, 1);
     --lmui-focus-bg: rgba(255, 255, 255, 0.095);
     --lmui-focus-border: rgba(255, 255, 255, 0.42);
-    --lmui-focus-ring: 0 0 0 0.09em rgba(255, 255, 255, 0.66), 0 0 0 0.17em rgba(var(--lmui-accent-rgb), 0.18);
+    --lmui-focus-ring: 0 0 0 0.09em rgba(255, 255, 255, 0.66), 0 0 0 0.17em rgba(255, 255, 255, 0.18);
     --lmui-focus-shadow: 0 0.72em 1.85em rgba(0, 0, 0, 0.34);
     --lmui-text-display: clamp(2.2em, 4.2vw, 4.45em);
     --lmui-text-heading: clamp(1.58em, 2.3vw, 2.45em);
@@ -80,29 +154,6 @@ body.lampa-modern-ui {
     -webkit-font-smoothing: antialiased;
 }
 
-body.lampa-modern-ui.lmui-accent-azure {
-    --lmui-accent: #72a7ff;
-    --lmui-accent-rgb: 114, 167, 255;
-    --lmui-accent-2: #8d78ff;
-}
-
-body.lampa-modern-ui.lmui-accent-violet {
-    --lmui-accent: #a28bff;
-    --lmui-accent-rgb: 162, 139, 255;
-    --lmui-accent-2: #6f8dff;
-}
-
-body.lampa-modern-ui.lmui-accent-emerald {
-    --lmui-accent: #5bd7ae;
-    --lmui-accent-rgb: 91, 215, 174;
-    --lmui-accent-2: #5da8ff;
-}
-
-body.lampa-modern-ui.lmui-accent-coral {
-    --lmui-accent: #ff8d7a;
-    --lmui-accent-rgb: 255, 141, 122;
-    --lmui-accent-2: #ffbd69;
-}
 
 body.lampa-modern-ui.lmui-motion-cinematic {
     --lmui-fast: 130ms;
@@ -126,7 +177,7 @@ body.lampa-modern-ui::before {
     z-index: -2;
     pointer-events: none;
     background:
-        radial-gradient(75% 55% at 9% -8%, rgba(var(--lmui-accent-rgb), 0.18), transparent 68%),
+        radial-gradient(75% 55% at 9% -8%, rgba(255, 255, 255, 0.18), transparent 68%),
         linear-gradient(145deg, #111624 0%, #090c14 46%, #05070c 100%);
 }
 
@@ -254,7 +305,7 @@ body.lampa-modern-ui .menu__item.hover::before {
     bottom: 23%;
     width: 0.17em;
     border-radius: 999em;
-    background: rgba(var(--lmui-accent-rgb), 0.72);
+    background: rgba(255, 255, 255, 0.72);
 }
 
 body.lampa-modern-ui .menu__item.focus .menu__ico [stroke],
@@ -287,7 +338,7 @@ body.lampa-modern-ui .items-line__head::before {
     height: 1.35em;
     margin-right: 0.62em;
     border-radius: 999em;
-    background: rgba(var(--lmui-accent-rgb), 0.72);
+    background: rgba(255, 255, 255, 0.72);
     box-shadow: none;
 }
 
@@ -396,7 +447,7 @@ body.lampa-modern-ui .card.hover .card__view::after {
     z-index: 2;
     border: 0.11em solid rgba(255,255,255,0.78);
     border-radius: calc(var(--lmui-radius-md) + 0.11em);
-    box-shadow: 0 0 0 0.08em rgba(var(--lmui-accent-rgb),0.18);
+    box-shadow: 0 0 0 0.08em rgba(255, 255, 255, 0.18);
 }
 
 body.lampa-modern-ui .card.hover .card__view::after {
@@ -581,7 +632,7 @@ body.lampa-modern-ui .selectbox-item.picked {
 
 body.lampa-modern-ui .selectbox-item.selected:not(.nomark)::after,
 body.lampa-modern-ui .selectbox-item.picked::after {
-    border-color: rgba(var(--lmui-accent-rgb),0.68);
+    border-color: rgba(255, 255, 255, 0.68);
     opacity: 0.84;
 }
 
@@ -665,7 +716,7 @@ body.lampa-modern-ui .torrent-item {
     animation: none !important;
 }
 
-/* Три спокойных варианта фокуса. Акцент используется как вторичный сигнал, а не заливка. */
+/* Три спокойных нейтральных варианта фокуса. */
 body.lampa-modern-ui.lmui-focus-outline .card.focus,
 body.lampa-modern-ui.lmui-focus-outline .card.hover,
 body.lampa-modern-ui.lmui-focus-outline .head__action.focus,
@@ -689,8 +740,8 @@ body.lampa-modern-ui.lmui-focus-soft .settings-param.focus,
 body.lampa-modern-ui.lmui-focus-soft .selectbox-item.focus,
 body.lampa-modern-ui.lmui-focus-soft .search-source.focus,
 body.lampa-modern-ui.lmui-focus-soft .search-history-key.focus {
-    background: rgba(var(--lmui-accent-rgb), 0.075) !important;
-    border-color: rgba(var(--lmui-accent-rgb), 0.22);
+    background: rgba(255, 255, 255, 0.075) !important;
+    border-color: rgba(255, 255, 255, 0.22);
 }
 
 body.lampa-modern-ui.lmui-focus-lift .card.focus,
@@ -1262,7 +1313,7 @@ body.lampa-modern-ui {
     --lmui-focus-neutral: rgba(255, 255, 255, 0.82);
     --lmui-focus-bg: rgba(255, 255, 255, 0.09);
     --lmui-focus-border: rgba(255, 255, 255, 0.46);
-    --lmui-focus-ring: 0 0 0 0.085em rgba(255, 255, 255, 0.72), 0 0 0 0.15em rgba(var(--lmui-accent-rgb), 0.11);
+    --lmui-focus-ring: 0 0 0 0.085em rgba(255, 255, 255, 0.72), 0 0 0 0.15em rgba(255, 255, 255, 0.11);
     --lmui-focus-shadow: 0 1em 2.7em rgba(0, 0, 0, 0.38);
     --lmui-motion-card: var(--lmui-normal);
     --lmui-motion-control: var(--lmui-fast);
@@ -1288,7 +1339,7 @@ body.lampa-modern-ui.lmui-performance-lite .background {
 body.lampa-modern-ui.lmui-performance-visual::before {
     opacity: 0.72;
     background:
-        radial-gradient(70% 54% at 8% -8%, rgba(var(--lmui-accent-rgb), 0.115), transparent 70%),
+        radial-gradient(70% 54% at 8% -8%, rgba(255, 255, 255, 0.115), transparent 70%),
         radial-gradient(58% 46% at 92% 8%, rgba(255, 255, 255, 0.035), transparent 72%),
         linear-gradient(145deg, rgba(10, 13, 22, 0.72) 0%, rgba(5, 7, 12, 0.92) 72%, #05070c 100%);
 }
@@ -1297,7 +1348,7 @@ body.lampa-modern-ui.lmui-performance-visual::after {
     opacity: 0.25;
 }
 
-/* Акцент — только маркер, прогресс и primary action; не сплошная заливка фокуса. */
+/* Нейтральные маркеры, прогресс и primary action. */
 body.lampa-modern-ui .items-line__head::before,
 body.lampa-modern-ui .menu__item.focus::before,
 body.lampa-modern-ui .menu__item.hover::before {
@@ -1315,7 +1366,7 @@ body.lampa-modern-ui .card.hover .card__view::after {
     border-width: 0.105em;
     border-radius: inherit;
     border-color: var(--lmui-focus-neutral);
-    box-shadow: inset 0 0 0 0.055em rgba(var(--lmui-accent-rgb), 0.12);
+    box-shadow: inset 0 0 0 0.055em rgba(255, 255, 255, 0.12);
 }
 
 body.lampa-modern-ui .menu__item.focus,
@@ -1446,7 +1497,7 @@ body.lampa-modern-ui .time-line {
 body.lampa-modern-ui .time-line > div {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, rgba(var(--lmui-accent-rgb), 0.82), rgba(255, 255, 255, 0.88));
+    background: rgba(255, 255, 255, 0.82);
     box-shadow: none;
 }
 
@@ -1526,15 +1577,15 @@ body.lampa-modern-ui .full-start-new__details > * {
 }
 
 body.lampa-modern-ui .full-start-new__buttons .full-start__button:first-child {
-    border-color: rgba(var(--lmui-accent-rgb), 0.30);
-    background: linear-gradient(135deg, rgba(var(--lmui-accent-rgb), 0.27), rgba(var(--lmui-accent-rgb), 0.15));
+    border-color: rgba(255, 255, 255, 0.30);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.27), rgba(255, 255, 255, 0.15));
     color: #fff;
 }
 
 body.lampa-modern-ui .full-start-new__buttons .full-start__button:first-child.focus,
 body.lampa-modern-ui .full-start-new__buttons .full-start__button:first-child.hover {
     border-color: rgba(255, 255, 255, 0.48);
-    background: linear-gradient(135deg, rgba(var(--lmui-accent-rgb), 0.36), rgba(var(--lmui-accent-rgb), 0.20));
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.20));
     box-shadow: var(--lmui-focus-ring), 0 0.8em 2em rgba(0, 0, 0, 0.30);
 }
 
@@ -1604,8 +1655,8 @@ body.lampa-modern-ui .search-history-key {
 }
 
 body.lampa-modern-ui .search-source.active {
-    border-color: rgba(var(--lmui-accent-rgb), 0.20);
-    background: rgba(var(--lmui-accent-rgb), 0.085);
+    border-color: rgba(255, 255, 255, 0.20);
+    background: rgba(255, 255, 255, 0.085);
 }
 
 /* Скелетоны: короткое однократное проявление, без бесконечного shimmer. */
@@ -2026,6 +2077,39 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
         });
     }
 
+    function removeShotsDom() {
+        try {
+            Array.prototype.slice.call(document.querySelectorAll('script[src*="/plugin/shots"], [class*="shots-"], #sprite-shots')).forEach(function (element) {
+                if (element && element.parentNode) element.parentNode.removeChild(element);
+            });
+
+            Array.prototype.slice.call(document.querySelectorAll('.menu__item, .settings-folder')).forEach(function (element) {
+                var text = String(element.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                if (text === 'shots') element.remove();
+            });
+        } catch (error) {
+            console.warn('[Lampa Modern UI] Shots DOM cleanup failed:', error);
+        }
+    }
+
+    function applyShotsPolicy() {
+        var disable = normalizeBoolean(storageGet(KEYS.disableShots, true), true);
+        if (!disable) return;
+
+        window.plugin_shots_ready = true;
+        storageSet('shots_in_player', false);
+        storageSet('shots_in_card', false);
+        storageSet('content_rows_shots_main', false);
+
+        try {
+            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') {
+                Lampa.SettingsApi.removeComponent('shots');
+            }
+        } catch (error) {}
+
+        removeShotsDom();
+    }
+
     function applyTheme() {
         var body = document.body;
         if (!body) return;
@@ -2035,7 +2119,6 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
         var enabled = normalizeBoolean(storageGet(KEYS.enabled, true), true);
         if (!enabled) return;
 
-        var accent = String(storageGet(KEYS.accent, 'azure') || 'azure');
         var motion = String(storageGet(KEYS.motion, 'cinematic') || 'cinematic');
         var density = String(storageGet(KEYS.density, 'comfortable') || 'comfortable');
         var performance = String(storageGet(KEYS.performance, 'visual') || 'visual');
@@ -2043,7 +2126,6 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
         var home = String(storageGet(KEYS.home, 'cinematic') || 'cinematic');
         var device = resolveDeviceMode();
 
-        if (['azure', 'violet', 'emerald', 'coral'].indexOf(accent) < 0) accent = 'azure';
         if (['balanced', 'cinematic', 'minimal'].indexOf(motion) < 0) motion = 'cinematic';
         if (['comfortable', 'compact'].indexOf(density) < 0) density = 'comfortable';
         if (['visual', 'balanced', 'lite'].indexOf(performance) < 0) performance = 'visual';
@@ -2052,7 +2134,6 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
 
         body.classList.add(
             'lampa-modern-ui',
-            'lmui-accent-' + accent,
             'lmui-motion-' + motion,
             'lmui-density-' + density,
             'lmui-performance-' + performance,
@@ -2114,24 +2195,12 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
             Lampa.SettingsApi.addParam({
                 component: PLUGIN_ID,
                 param: {
-                    name: KEYS.accent,
-                    type: 'select',
-                    values: { azure: 'Лазурный', violet: 'Фиолетовый', emerald: 'Изумрудный', coral: 'Коралловый' },
-                    default: 'azure'
-                },
-                field: { name: 'Акцент', description: 'Цвет фокуса, активных кнопок и маркеров.' },
-                onChange: applyTheme
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: PLUGIN_ID,
-                param: {
                     name: KEYS.focus,
                     type: 'select',
                     values: { outline: 'Спокойный контур', soft: 'Мягкая подсветка', lift: 'Кинематографичный фокус' },
                     default: 'lift'
                 },
-                field: { name: 'Стиль фокуса', description: 'По умолчанию изображение мягко оживает внутри карточки; яркой акцентной заливки нет.' },
+                field: { name: 'Стиль фокуса', description: 'По умолчанию изображение мягко оживает внутри карточки; цветной заливки нет.' },
                 onChange: applyTheme
             });
 
@@ -2204,6 +2273,19 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
 
             Lampa.SettingsApi.addParam({
                 component: PLUGIN_ID,
+                param: { name: KEYS.disableShots, type: 'trigger', default: true },
+                field: {
+                    name: 'Полностью отключить Shots',
+                    description: 'Блокирует загрузку встроенного плагина Shots. Изменение гарантированно применяется после полного перезапуска Lampa.'
+                },
+                onChange: function () {
+                    applyShotsPolicy();
+                    notify(normalizeBoolean(storageGet(KEYS.disableShots, true), true) ? 'Shots отключён. Полностью перезапустите Lampa.' : 'Shots разрешён. Полностью перезапустите Lampa.');
+                }
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_ID,
                 param: { name: 'lmui_restore_core', type: 'button' },
                 field: {
                     name: 'Восстановить настройки Lampa',
@@ -2234,7 +2316,6 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
          * значения сохраняются. Профиль visual затем штатно восстанавливает
          * core-настройки Lampa из безопасной резервной копии v2. */
         var looksUntouched = hasOldProfileBackup &&
-            isUnsetOr(KEYS.accent, 'azure') &&
             isUnsetOr(KEYS.motion, 'balanced') &&
             isUnsetOr(KEYS.density, 'comfortable') &&
             isUnsetOr(KEYS.performance, 'balanced') &&
@@ -2256,14 +2337,21 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
         window[READY_FLAG] = true;
 
         migratePluginDefaults();
+        applyShotsPolicy();
         injectStyle();
         addSettings();
         applyAll();
+
+        /* Одноразовая повторная очистка нужна, если встроенный script Shots уже
+         * был добавлен ServiceLibs, но ещё не успел выполниться к старту плагина. */
+        setTimeout(applyShotsPolicy, 600);
+        setTimeout(applyShotsPolicy, 1800);
 
         if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
             Lampa.Listener.follow('activity', function (event) {
                 if (event && (event.type === 'start' || event.type === 'create' || event.type === 'archive')) {
                     applyActivityClass(event.component);
+                    applyShotsPolicy();
                 }
             });
             Lampa.Listener.follow('resize_end', function () {
@@ -2289,15 +2377,15 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
     }
 })();
 
-/* Lampa Personal Core 1.0.1
+/* Lampa Personal Core 1.0.2
  * Локальная персональная главная, единая идентификация и объяснимые рекомендации.
  * Профиль один, хранится локально. Облачная синхронизация не используется.
  */
 (function () {
     'use strict';
 
-    var VERSION = '1.0.1';
-    var READY_FLAG = '__lampa_personal_core_v101_ready__';
+    var VERSION = '1.0.2';
+    var READY_FLAG = '__lampa_personal_core_v102_ready__';
     var PROFILE_KEY = 'lpersonal_profile_v1';
     var STYLE_ID = 'lampa-personal-style';
     var COMPONENT_ID = 'lampa_personal';
@@ -2320,14 +2408,16 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
         enabled: 'lpersonal_enabled',
         cardPanel: 'lpersonal_card_panel',
         hideComments: 'lpersonal_hide_comments',
-        homeOrder: 'lpersonal_home_order',
+        legacyHomeOrder: 'lpersonal_home_order',
+        homeSlots: ['lpersonal_home_slot_1', 'lpersonal_home_slot_2', 'lpersonal_home_slot_3', 'lpersonal_home_slot_4', 'lpersonal_home_slot_5', 'lpersonal_home_slot_6'],
         rowContinue: 'lpersonal_row_continue',
         rowRecent: 'lpersonal_row_recent',
         rowEpisodes: 'lpersonal_row_new_episodes',
         rowWatchlist: 'lpersonal_row_watchlist',
         rowUnfinished: 'lpersonal_row_unfinished',
         rowRecommendations: 'lpersonal_row_recommendations',
-        recommendationLimit: 'lpersonal_recommendation_limit'
+        recommendationLimit: 'lpersonal_recommendation_limit',
+        diagnostics: 'lpersonal_home_diagnostics'
     };
     var ROW_SETTING = {
         continue: SETTINGS.rowContinue,
@@ -2347,6 +2437,22 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
     var recomputeTimer = 0;
     var enrichmentRunning = false;
     var saveLocked = false;
+    var homeDiagnosticsState = {
+        registeredAt: 0,
+        calls: 0,
+        lastCallAt: 0,
+        lastScreen: '',
+        lastParams: {},
+        lastCounts: {},
+        lastCallbacks: [],
+        coldStartRequests: 0,
+        coldStartResults: 0,
+        coldStartError: '',
+        refreshRequests: 0,
+        lastRefreshAt: 0,
+        lastRefreshReason: '',
+        lastError: ''
+    };
 
     var CSS = String.raw`
 body.lampa-modern-ui .lpersonal-card-panel,
@@ -2710,7 +2816,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
     }
 
     function captureInterfaceSettings() {
-        var keys = ['lmui_enabled', 'lmui_accent', 'lmui_motion', 'lmui_density', 'lmui_performance', 'lmui_focus', 'lmui_device', 'lmui_home'];
+        var keys = ['lmui_enabled', 'lmui_motion', 'lmui_density', 'lmui_performance', 'lmui_focus', 'lmui_device', 'lmui_home'];
         var result = {};
         keys.forEach(function (key) {
             var value = storageField(key, undefined);
@@ -2743,14 +2849,74 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         return unique(order);
     }
 
+    function homeSlotValues() {
+        var order = [];
+        SETTINGS.homeSlots.forEach(function (key) {
+            var id = normalizeText(storageField(key, '')).toLowerCase();
+            if (HOME_IDS.indexOf(id) >= 0 && order.indexOf(id) < 0) order.push(id);
+        });
+        return order;
+    }
+
+    function persistHomeSlots(order) {
+        order = normalizeHomeOrder(order);
+        SETTINGS.homeSlots.forEach(function (key, index) {
+            storageSet(key, order[index]);
+        });
+        storageSet(SETTINGS.legacyHomeOrder, order.join(','));
+    }
+
     function syncHomeSettingsToProfile(save) {
         if (!profile) return;
-        profile.home.order = normalizeHomeOrder(storageField(SETTINGS.homeOrder, profile.home.order.join(',')));
+
+        var slotOrder = homeSlotValues();
+        if (!slotOrder.length) {
+            var legacy = storageField(SETTINGS.legacyHomeOrder, '');
+            profile.home.order = normalizeHomeOrder(legacy || profile.home.order);
+            persistHomeSlots(profile.home.order);
+        } else {
+            profile.home.order = normalizeHomeOrder(slotOrder.concat(profile.home.order));
+            persistHomeSlots(profile.home.order);
+        }
+
         HOME_IDS.forEach(function (id) {
             profile.home.enabled[id] = boolValue(storageField(ROW_SETTING[id], profile.home.enabled[id]), profile.home.enabled[id]);
         });
+
+        var personalEnabled = boolValue(storageField(SETTINGS.enabled, true), true);
+        storageSet('content_rows_lpersonal_home', personalEnabled);
         if (save !== false) saveProfile('home-settings');
         updateHomeRowIndexes();
+    }
+
+    function updateHomeSlot(index) {
+        if (!profile || index < 0 || index >= SETTINGS.homeSlots.length) return;
+        var selected = normalizeText(storageField(SETTINGS.homeSlots[index], profile.home.order[index])).toLowerCase();
+        if (HOME_IDS.indexOf(selected) < 0) return;
+
+        var order = normalizeHomeOrder(profile.home.order);
+        var current = order[index];
+        var selectedIndex = order.indexOf(selected);
+        if (selectedIndex >= 0 && selectedIndex !== index) {
+            order[index] = selected;
+            order[selectedIndex] = current;
+        } else {
+            order[index] = selected;
+        }
+
+        profile.home.order = normalizeHomeOrder(order);
+        persistHomeSlots(profile.home.order);
+        saveProfile('home-order-slot');
+        scheduleHomeRefresh('home-order-slot');
+        notify('Порядок главной обновлён');
+    }
+
+    function resetHomeOrder() {
+        profile.home.order = HOME_IDS.slice();
+        persistHomeSlots(profile.home.order);
+        saveProfile('home-order-reset');
+        scheduleHomeRefresh('home-order-reset');
+        notify('Порядок блоков сброшен');
     }
 
     function mediaTypeOf(card) {
@@ -3425,8 +3591,11 @@ body.lmui-device-phone .lpersonal-card-panel__button {
 
     function coldStartCallback(params) {
         return function (call) {
+            homeDiagnosticsState.coldStartRequests += 1;
+            homeDiagnosticsState.coldStartError = '';
             var cached = coldStartCards();
             if (cached.length) {
+                homeDiagnosticsState.coldStartResults = cached.length;
                 call({ results: cached.slice(0, numberValue(storageField(SETTINGS.recommendationLimit, 20), 20)), title: hasPersonalSignals() ? 'Возможно, вам понравится' : 'Подборка для начала' });
                 return;
             }
@@ -3435,12 +3604,17 @@ body.lmui-device-phone .lpersonal-card-panel__button {
                 if (!source || typeof source.get !== 'function') return call();
                 source.get('trending/movie/week', params || {}, function (json) {
                     var results = rememberColdStart(json && json.results);
+                    homeDiagnosticsState.coldStartResults = results.length;
                     call({
                         results: results.slice(0, numberValue(storageField(SETTINGS.recommendationLimit, 20), 20)),
                         title: hasPersonalSignals() ? 'Возможно, вам понравится' : 'Подборка для начала'
                     });
-                }, function () { call(); }, { life: 1000 * 60 * 60 * 6 });
+                }, function (error) {
+                    homeDiagnosticsState.coldStartError = error && (error.message || error.status || String(error)) || 'TMDB request failed';
+                    call();
+                }, { life: 1000 * 60 * 60 * 6 });
             } catch (error) {
+                homeDiagnosticsState.coldStartError = error && (error.message || String(error)) || 'unknown error';
                 console.warn('[Lampa Personal] cold-start row failed:', error);
                 call();
             }
@@ -3458,96 +3632,210 @@ body.lmui-device-phone .lpersonal-card-panel__button {
     }
 
     function registerHomeRows() {
-        if (!window.Lampa || !Lampa.ContentRows || typeof Lampa.ContentRows.add !== 'function') return;
+        if (!window.Lampa || !Lampa.ContentRows || typeof Lampa.ContentRows.add !== 'function') {
+            homeDiagnosticsState.lastError = 'Lampa.ContentRows.add unavailable';
+            return;
+        }
         if (homeRows.aggregate) return;
+
         var row = {
             name: 'lpersonal_home',
             title: 'Персональная главная',
             index: 0,
             screen: ['main'],
-            call: function (params) {
-                if (!boolValue(storageField(SETTINGS.enabled, true), true)) return;
+            call: function (params, screen) {
+                homeDiagnosticsState.calls += 1;
+                homeDiagnosticsState.lastCallAt = now();
+                homeDiagnosticsState.lastScreen = screen || '';
+                homeDiagnosticsState.lastParams = clone(params || {});
+                homeDiagnosticsState.lastCounts = {};
+                homeDiagnosticsState.lastCallbacks = [];
+                homeDiagnosticsState.lastError = '';
+
+                if (!boolValue(storageField(SETTINGS.enabled, true), true)) {
+                    homeDiagnosticsState.lastError = 'Personal functions disabled';
+                    return;
+                }
+
                 syncHomeSettingsToProfile(false);
                 var callbacks = [];
                 profile.home.order.forEach(function (id) {
-                    if (!profile.home.enabled[id]) return;
+                    if (!profile.home.enabled[id]) {
+                        homeDiagnosticsState.lastCounts[id] = 'disabled';
+                        return;
+                    }
                     var results = rowResults(id);
-                    if (results.length) callbacks.push(rowCallback(id, results));
-                    else if (id === 'recommendations') callbacks.push(coldStartCallback(params));
+                    homeDiagnosticsState.lastCounts[id] = results.length;
+                    if (results.length) {
+                        callbacks.push(rowCallback(id, results));
+                        homeDiagnosticsState.lastCallbacks.push(id);
+                    } else if (id === 'recommendations') {
+                        callbacks.push(coldStartCallback(params));
+                        homeDiagnosticsState.lastCallbacks.push('recommendations:cold-start');
+                    }
                 });
                 return callbacks.length ? callbacks : undefined;
             }
         };
+
         homeRows.aggregate = row;
         Lampa.ContentRows.add(row);
+        homeDiagnosticsState.registeredAt = now();
+        storageSet('content_rows_lpersonal_home', boolValue(storageField(SETTINGS.enabled, true), true));
+        scheduleHomeRefresh('initial-registration');
     }
 
-    function persistHomeSettings() {
-        storageSet(SETTINGS.homeOrder, profile.home.order.join(','));
-        HOME_IDS.forEach(function (id) { storageSet(ROW_SETTING[id], !!profile.home.enabled[id]); });
-        saveProfile('home-manager');
-        updateHomeRowIndexes();
-        scheduleHomeRefresh();
+    function activeComponentName() {
+        try {
+            var active = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
+            return active && active.component || '';
+        } catch (error) {
+            return '';
+        }
     }
 
-    function openHomeBlockActions(id) {
-        var controller = controllerName();
-        var index = profile.home.order.indexOf(id);
-        selectShow({
-            title: HOME_TITLES[id],
-            items: [
-                { title: profile.home.enabled[id] ? 'Отключить блок' : 'Включить блок', action: 'toggle' },
-                { title: 'Переместить выше', action: 'up' },
-                { title: 'Переместить ниже', action: 'down' }
-            ],
-            onSelect: function (item) {
-                if (item.action === 'toggle') profile.home.enabled[id] = !profile.home.enabled[id];
-                if (item.action === 'up' && index > 0) {
-                    profile.home.order.splice(index, 1);
-                    profile.home.order.splice(index - 1, 0, id);
-                }
-                if (item.action === 'down' && index >= 0 && index < profile.home.order.length - 1) {
-                    profile.home.order.splice(index, 1);
-                    profile.home.order.splice(index + 1, 0, id);
-                }
-                persistHomeSettings();
-                restoreController(controller);
-                setTimeout(openHomeManager, 0);
+    function renderedHomeTitles() {
+        try {
+            return Array.prototype.slice.call(document.querySelectorAll('.activity--active .items-line__title, .items-line__title')).map(function (element) {
+                return normalizeText(element.textContent);
+            }).filter(Boolean);
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function collectHomeDiagnostics() {
+        var counts = {};
+        HOME_IDS.forEach(function (id) {
+            try { counts[id] = rowResults(id).length; }
+            catch (error) { counts[id] = 'error: ' + (error.message || String(error)); }
+        });
+
+        var report = {
+            pluginVersion: VERSION,
+            timestamp: new Date().toISOString(),
+            activeComponent: activeComponentName(),
+            personalEnabled: boolValue(storageField(SETTINGS.enabled, true), true),
+            contentRowEnabled: boolValue(storageGet('content_rows_lpersonal_home', true), true),
+            rowRegistered: !!homeRows.aggregate,
+            homeOrder: profile.home.order.slice(),
+            enabledBlocks: clone(profile.home.enabled),
+            rowCounts: counts,
+            profileCounts: {
+                recent: profile.recent.length,
+                history: Object.keys(profile.history).length,
+                episodeHistory: Object.keys(profile.episodeHistory).length,
+                ratings: Object.keys(profile.ratings).length,
+                watchlist: profile.collections.watchlist.length,
+                candidates: Object.keys(profile.candidates).length,
+                recommendations: asArray(profile.recommendations.items).length,
+                coldStart: asArray(profile.home.coldStart).length
             },
-            onBack: function () { restoreController(controller); }
-        });
+            lampaCounts: {
+                history: favoriteGet('history').length,
+                viewed: favoriteGet('viewed').length,
+                thrown: favoriteGet('thrown').length,
+                book: favoriteGet('book').length,
+                continuesMovie: (function () {
+                    try { return Lampa.Favorite && typeof Lampa.Favorite.continues === 'function' ? asArray(Lampa.Favorite.continues('movie')).length : -1; }
+                    catch (error) { return -1; }
+                })(),
+                continuesTv: (function () {
+                    try { return Lampa.Favorite && typeof Lampa.Favorite.continues === 'function' ? asArray(Lampa.Favorite.continues('tv')).length : -1; }
+                    catch (error) { return -1; }
+                })(),
+                timetableRecently: (function () {
+                    try { return Lampa.TimeTable && typeof Lampa.TimeTable.recently === 'function' ? asArray(Lampa.TimeTable.recently()).length : -1; }
+                    catch (error) { return -1; }
+                })()
+            },
+            capabilities: {
+                contentRows: !!(Lampa.ContentRows && typeof Lampa.ContentRows.add === 'function'),
+                activityRefresh: !!(Lampa.Activity && typeof Lampa.Activity.refresh === 'function'),
+                tmdbGet: !!(Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb && typeof Lampa.Api.sources.tmdb.get === 'function')
+            },
+            runtime: clone(homeDiagnosticsState),
+            renderedTitles: renderedHomeTitles(),
+            likelyReasons: []
+        };
+
+        if (!report.personalEnabled) report.likelyReasons.push('Персональные функции выключены.');
+        if (!report.contentRowEnabled) report.likelyReasons.push('Канал content_rows_lpersonal_home выключен.');
+        if (!report.rowRegistered) report.likelyReasons.push('Строка не зарегистрирована в Lampa.ContentRows.');
+        if (report.activeComponent === 'main' && report.runtime.calls === 0) report.likelyReasons.push('Главная была построена до регистрации строки; требуется обновление активности.');
+        if (report.runtime.calls > 0 && !report.runtime.lastCallbacks.length) report.likelyReasons.push('ContentRows вызвал плагин, но ни один блок не вернул карточки.');
+        if (!report.capabilities.tmdbGet && report.rowCounts.recommendations === 0) report.likelyReasons.push('TMDB source.get недоступен, начальную подборку загрузить нельзя.');
+        if (report.enabledBlocks.continue && report.rowCounts.continue === 0 && report.lampaCounts.continuesMovie <= 0 && report.lampaCounts.continuesTv <= 0) report.likelyReasons.push('Для «Продолжить просмотр» Lampa не вернула ни одного элемента continues.');
+        if (report.enabledBlocks.recent && report.rowCounts.recent === 0 && report.profileCounts.recent === 0) report.likelyReasons.push('Для «Недавно открытые» локальная история открытий пока пуста.');
+        if (report.enabledBlocks.new_episodes && report.rowCounts.new_episodes === 0 && report.lampaCounts.timetableRecently <= 0) report.likelyReasons.push('TimeTable не вернул новые серии.');
+        if (report.enabledBlocks.watchlist && report.rowCounts.watchlist === 0 && report.profileCounts.watchlist === 0 && report.lampaCounts.book === 0) report.likelyReasons.push('Список ожидания и штатные закладки Lampa пусты.');
+        if (report.runtime.coldStartError) report.likelyReasons.push('Ошибка начальной подборки: ' + report.runtime.coldStartError);
+        if (report.runtime.calls > 0 && report.runtime.lastCallbacks.length && !report.renderedTitles.some(function (title) {
+            return Object.keys(HOME_TITLES).some(function (id) { return title === HOME_TITLES[id]; }) || title === 'Подборка для начала' || title === 'Возможно, вам понравится';
+        })) report.likelyReasons.push('Callback сформирован, но персональная строка отсутствует в DOM.');
+        if (!report.likelyReasons.length) report.likelyReasons.push('Явная блокирующая причина не найдена; нужен этот отчёт после открытия главной.');
+        return report;
     }
 
-    function openHomeManager() {
+    function copyDiagnosticReport(report) {
+        var text = JSON.stringify(report, null, 2);
+        try {
+            if (Lampa.Utils && typeof Lampa.Utils.copyTextToClipboard === 'function') {
+                Lampa.Utils.copyTextToClipboard(text, function () { notify('Отчёт скопирован'); }, function () { notify('Не удалось скопировать отчёт'); });
+                return;
+            }
+        } catch (error) {}
+        console.log(text);
+        notify('Отчёт выведен в консоль');
+    }
+
+    function runHomeDiagnostics(showUi) {
+        var report = collectHomeDiagnostics();
+        try {
+            console.group('[Lampa Personal] Home diagnostics');
+            console.log(report);
+            if (console.table) console.table(report.rowCounts);
+            console.groupEnd();
+        } catch (error) {}
+
+        if (showUi === false) return report;
         var controller = controllerName();
-        var items = profile.home.order.map(function (id, index) {
-            return {
-                title: (index + 1) + '. ' + HOME_TITLES[id] + (profile.home.enabled[id] ? '' : ' — выключен'),
-                id: id
-            };
-        });
+        var items = [
+            { title: 'Скопировать полный отчёт', action: 'copy' },
+            { title: 'Обновить главную сейчас', action: 'refresh' },
+            { title: 'Компонент: ' + (report.activeComponent || 'не определён'), info: true },
+            { title: 'Вызовов ContentRows: ' + report.runtime.calls, info: true },
+            { title: 'Сформировано блоков: ' + report.runtime.lastCallbacks.join(', '), info: true },
+            { title: 'Причина: ' + report.likelyReasons.join(' '), info: true }
+        ];
         selectShow({
-            title: 'Блоки персональной главной',
+            title: 'Диагностика персональной главной',
             items: items,
             onSelect: function (item) {
+                if (item.action === 'copy') copyDiagnosticReport(report);
+                if (item.action === 'refresh') scheduleHomeRefresh('manual-diagnostics');
                 restoreController(controller);
-                openHomeBlockActions(item.id);
             },
             onBack: function () { restoreController(controller); }
         });
+        return report;
     }
 
-    function scheduleHomeRefresh() {
+    function scheduleHomeRefresh(reason) {
         clearTimeout(refreshTimer);
+        homeDiagnosticsState.refreshRequests += 1;
+        homeDiagnosticsState.lastRefreshAt = now();
+        homeDiagnosticsState.lastRefreshReason = reason || 'update';
         refreshTimer = setTimeout(function () {
             try {
                 if (!window.Lampa || !Lampa.Activity || typeof Lampa.Activity.active !== 'function') return;
                 var active = Lampa.Activity.active();
                 if (active && active.component === 'main' && typeof Lampa.Activity.refresh === 'function') Lampa.Activity.refresh(false);
             } catch (error) {
+                homeDiagnosticsState.lastError = error && (error.message || String(error)) || 'refresh failed';
                 console.warn('[Lampa Personal] home refresh failed:', error);
             }
-        }, 180);
+        }, 350);
     }
 
     function featureWeights() {
@@ -3854,9 +4142,6 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         if (metadata.runtimeMinutes) chips.push('<span class="lpersonal-card-panel__meta">' + escapeHtml(formatRuntime(metadata.runtimeMinutes)) + '</span>');
         if (metadata.status) chips.push('<span class="lpersonal-card-panel__meta">' + escapeHtml(metadata.status) + '</span>');
         if (metadata.nextEpisode) chips.push('<span class="lpersonal-card-panel__meta">Следующая серия: ' + escapeHtml(formatNextEpisode(metadata.nextEpisode)) + '</span>');
-        if (metadata.relations && asArray(metadata.relations.franchise).length) chips.push('<span class="lpersonal-card-panel__meta">Франшиза: ' + asArray(metadata.relations.franchise).length + '</span>');
-        if (metadata.relations && asArray(metadata.relations.related).length) chips.push('<span class="lpersonal-card-panel__meta">Связанные: ' + asArray(metadata.relations.related).length + '</span>');
-        if (metadata.relations && asArray(metadata.relations.similar).length) chips.push('<span class="lpersonal-card-panel__meta">Похожие: ' + asArray(metadata.relations.similar).length + '</span>');
         if (userRating) chips.push('<span class="lpersonal-card-panel__meta">Ваша оценка: ' + escapeHtml(userRating) + '/10</span>');
 
         var html = $('<div class="lpersonal-card-panel"></div>');
@@ -4370,11 +4655,20 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         var icon = '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 5.5c4.8 0 8.7 3.9 8.7 8.7 0 6.5-8.7 12.3-8.7 12.3S7.3 20.7 7.3 14.2C7.3 9.4 11.2 5.5 16 5.5Z" stroke="currentColor" stroke-width="2"/><path d="M12 14.5l2.6 2.6L20.5 11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         try {
             Lampa.SettingsApi.addComponent({ component: COMPONENT_ID, name: 'Персональная Lampa', icon: icon });
-            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.enabled, type: 'trigger', default: true }, field: { name: 'Включить персональные функции', description: 'Локальная главная, единая история, оценки, коллекции и рекомендации.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh(); } });
+            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.enabled, type: 'trigger', default: true }, field: { name: 'Включить персональные функции', description: 'Локальная главная, единая история, оценки, коллекции и рекомендации.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh('personal-enabled'); } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.cardPanel, type: 'trigger', default: true }, field: { name: 'Расширенная карточка', description: 'Показывать рейтинги, статус сериала, следующую серию и персональные действия.' } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.hideComments, type: 'trigger', default: true }, field: { name: 'Скрывать комментарии в карточке', description: 'Не добавлять стандартный раздел комментариев Lampa во внутреннюю карточку фильма или сериала.' } });
-            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_manage_home', type: 'button' }, field: { name: 'Настроить персональную главную', description: 'Изменить порядок блоков и включить или отключить их без ручного ввода.' }, onChange: openHomeManager });
-            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.homeOrder, type: 'input', values: '', default: HOME_IDS.join(',') }, field: { name: 'Порядок блоков', description: 'Идентификаторы через запятую: continue,recent,new_episodes,watchlist,unfinished,recommendations.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh(); } });
+            var homeValues = { continue: 'Продолжить просмотр', recent: 'Недавно открытые', new_episodes: 'Новые серии', watchlist: 'Список ожидания', unfinished: 'Незаконченные', recommendations: 'Рекомендации' };
+            SETTINGS.homeSlots.forEach(function (key, index) {
+                Lampa.SettingsApi.addParam({
+                    component: COMPONENT_ID,
+                    param: { name: key, type: 'select', values: homeValues, default: HOME_IDS[index] },
+                    field: { name: 'Позиция ' + (index + 1), description: 'Выбор автоматически меняется местами с блоком, который уже занимает эту позицию.' },
+                    onChange: function () { updateHomeSlot(index); }
+                });
+            });
+            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_reset_home_order', type: 'button' }, field: { name: 'Сбросить порядок блоков', description: 'Вернуть стандартный порядок персональной главной.' }, onChange: resetHomeOrder });
+            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.diagnostics, type: 'button' }, field: { name: 'Диагностика персональной главной', description: 'Показать причины отсутствия блоков и вывести полный отчёт в консоль.' }, onChange: function () { runHomeDiagnostics(true); } });
             [
                 [SETTINGS.rowContinue, 'Продолжить просмотр'],
                 [SETTINGS.rowRecent, 'Недавно открытые'],
@@ -4383,9 +4677,9 @@ body.lmui-device-phone .lpersonal-card-panel__button {
                 [SETTINGS.rowUnfinished, 'Незаконченные'],
                 [SETTINGS.rowRecommendations, 'Рекомендации']
             ].forEach(function (item) {
-                Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: item[0], type: 'trigger', default: true }, field: { name: item[1], description: 'Показывать блок на главной странице.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh(); } });
+                Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: item[0], type: 'trigger', default: true }, field: { name: item[1], description: 'Показывать блок на главной странице.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh('block-toggle'); } });
             });
-            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.recommendationLimit, type: 'select', values: { 10: '10', 15: '15', 20: '20' }, default: 20 }, field: { name: 'Карточек в рекомендациях', description: 'Максимальное количество карточек в строке рекомендаций.' }, onChange: scheduleHomeRefresh });
+            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.recommendationLimit, type: 'select', values: { 10: '10', 15: '15', 20: '20' }, default: 20 }, field: { name: 'Карточек в рекомендациях', description: 'Максимальное количество карточек в строке рекомендаций.' }, onChange: function () { scheduleHomeRefresh('recommendation-limit'); } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_refresh', type: 'button' }, field: { name: 'Обновить рекомендации', description: 'Пересчитать рекомендации и дополнить метаданные нескольких кандидатов.' }, onChange: function () { notify('Обновляем рекомендации…'); enrichRecommendationCandidates(8, function () { notify('Рекомендации обновлены'); }); } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_export', type: 'button' }, field: { name: 'Экспортировать профиль', description: 'Сохранить локальную историю, оценки, коллекции, исключения и оформление в JSON.' }, onChange: exportProfile });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_import', type: 'button' }, field: { name: 'Импортировать профиль', description: 'Объединить или заменить локальные данные из резервной копии.' }, onChange: importProfile });
@@ -4465,7 +4759,8 @@ body.lmui-device-phone .lpersonal-card-panel__button {
             importData: importProfileText,
             registerRatingProvider: registerRatingProvider,
             clearHistory: clearHistory,
-            clearRecommendations: clearRecommendations
+            clearRecommendations: clearRecommendations,
+            diagnoseHome: function () { return runHomeDiagnostics(false); }
         };
 
         console.info('[Lampa Personal] v' + VERSION + ' loaded');
