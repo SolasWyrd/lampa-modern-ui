@@ -1,4 +1,4 @@
-/* Lampa Modern UI 0.12.0 — permanent Shots guard. */
+/* Lampa Modern UI 0.12.1 — permanent Shots guard. */
 (function () {
     'use strict';
 
@@ -239,17 +239,17 @@
     }
 })();
 
-/* Lampa Modern UI 0.12.0
+/* Lampa Modern UI 0.12.1
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.12.0';
+    var VERSION = '0.12.1';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v0120_ready__';
+    var READY_FLAG = '__lampa_modern_ui_v0121_ready__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
@@ -294,8 +294,16 @@
     var mainFallbackInstalled = false;
     var searchFallbackInstalled = false;
     var diagnosticsEnabled = true;
+    var diagnosticsVerbose = false;
     var diagnosticBuffer = [];
     var diagnosticSequence = 0;
+    var lastControllerLogKey = '';
+    var lastControllerLogAt = 0;
+    var lastSettingsCleanupSignature = '';
+    var searchScheduledValue = '';
+    var searchRequestGeneration = 0;
+    var searchResultSignatures = {};
+    var lastLayoutSignature = '';
 
     var KEYS = {
         enabled: 'lmui_enabled',
@@ -1279,6 +1287,12 @@ body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="loading"] .lmui
     color: var(--lmui-accent-strong);
 }
 
+/* Cached core results must not compete with the landing/typing workflow. */
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="landing"] .search__results,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="typing"] .search__results {
+    display: none;
+}
+
 body.lampa-modern-ui.lmui-layout-desktop .main-search .search__results .items-line {
     margin-bottom: 0.9em;
 }
@@ -1839,6 +1853,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         } catch (error) {}
         return {
             version: VERSION,
+            verboseLogs: diagnosticsVerbose,
             activeComponent: active && active.component || '',
             controller: diagnosticController(),
             inputMode: lastInputMode || '',
@@ -1867,6 +1882,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             version: VERSION,
             enableLogs: function () { diagnosticsEnabled = true; diagnostic('diagnostics.enabled'); },
             disableLogs: function () { diagnostic('diagnostics.disabled'); diagnosticsEnabled = false; },
+            enableVerboseLogs: function () { diagnosticsVerbose = true; diagnostic('diagnostics.verbose_enabled'); },
+            disableVerboseLogs: function () { diagnostic('diagnostics.verbose_disabled'); diagnosticsVerbose = false; },
             logs: function () { return diagnosticBuffer.slice(); },
             clearLogs: function () { diagnosticBuffer = []; diagnosticSequence = 0; },
             snapshot: diagnosticSnapshot,
@@ -1883,6 +1900,19 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         };
     }
 
+    function controllerToggleImportant(name, before, after) {
+        if (diagnosticsVerbose) return true;
+        var important = [
+            'search', 'keybord', 'search_history', 'search_sources', 'search_results',
+            'settings', 'settings_component', 'select',
+            'player', 'player-loading', 'player_skip', 'player_panel',
+            'episodes', 'full'
+        ];
+        if (important.indexOf(String(name || '')) >= 0) return true;
+        if (before && after && before.name !== after.name && after.name !== String(name || '') && name !== 'content') return true;
+        return !!activeModernMain && activeComponent() === 'main' && (name === 'content' || name === 'menu' || name === 'head');
+    }
+
     function installControllerDiagnostics() {
         if (controllerDiagnosticsInstalled || !window.Lampa || !Lampa.Controller || typeof Lampa.Controller.toggle !== 'function') return;
         controllerDiagnosticsInstalled = true;
@@ -1895,8 +1925,21 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 result = original.apply(this, arguments);
             } finally {
                 var after = diagnosticController();
-                if (before.name !== after.name || name === 'content' || name === 'search' || name === 'settings') {
-                    diagnostic('controller.toggle', { requested: name, before: before, after: after, component: activeComponent() });
+                var changed = before.name !== after.name;
+                var mismatch = changed && after.name && after.name !== String(name || '') && name !== 'content';
+                if ((changed || diagnosticsVerbose) && controllerToggleImportant(name, before, after)) {
+                    var key = [name || '', before.name || '', after.name || '', activeComponent() || ''].join('|');
+                    var stamp = Date.now ? Date.now() : 0;
+                    if (key !== lastControllerLogKey || stamp - lastControllerLogAt > 180 || mismatch) {
+                        lastControllerLogKey = key;
+                        lastControllerLogAt = stamp;
+                        diagnostic(mismatch ? 'controller.toggle_mismatch' : 'controller.toggle', {
+                            requested: name,
+                            before: before,
+                            after: after,
+                            component: activeComponent()
+                        }, mismatch ? 'warn' : undefined);
+                    }
                 }
             }
             return result;
@@ -2917,10 +2960,11 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return true;
     }
 
-    function removeHiddenSettingsComponents() {
+    function removeHiddenSettingsComponents(reason) {
         if (!window.Lampa || !Lampa.SettingsApi || typeof Lampa.SettingsApi.removeComponent !== 'function') {
-            removeHiddenSettingsDom(document);
-            return;
+            var domOnly = removeHiddenSettingsDom(document);
+            if (domOnly || diagnosticsVerbose) diagnostic('settings.cleanup', { reason: reason || '', apiRemoved: [], apiRemaining: [], domRemoved: domOnly });
+            return { apiRemoved: [], apiRemaining: [], domRemoved: domOnly };
         }
         var ids = HIDDEN_COMPONENT_IDS.slice();
         var before = [];
@@ -2944,8 +2988,25 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         try { after = typeof Lampa.SettingsApi.allComponents === 'function' ? Object.keys(Lampa.SettingsApi.allComponents() || {}) : []; }
         catch (error) {}
         var removedApi = before.filter(function (id) { return after.indexOf(id) < 0 && (hiddenSettingsId(id) || ids.indexOf(id) >= 0); });
-        removeHiddenSettingsDom(document);
-        diagnostic('settings.cleanup', { apiRemoved: removedApi, apiRemaining: after.filter(hiddenSettingsId) });
+        var remaining = after.filter(hiddenSettingsId);
+        var removedDom = removeHiddenSettingsDom(document);
+        var signature = [removedApi.join(','), remaining.join(','), removedDom].join('|');
+        if (removedApi.length || remaining.length || removedDom || (diagnosticsVerbose && signature !== lastSettingsCleanupSignature)) {
+            diagnostic('settings.cleanup', { reason: reason || '', apiRemoved: removedApi, apiRemaining: remaining, domRemoved: removedDom });
+        }
+        lastSettingsCleanupSignature = signature;
+        return { apiRemoved: removedApi, apiRemaining: remaining, domRemoved: removedDom };
+    }
+
+    function settingsMutationTouchesUi(node) {
+        if (!node || node.nodeType !== 1) return false;
+        try {
+            if (node.matches && node.matches('.settings, .settings__body, .settings-folder, .settings-param')) return true;
+            if (node.closest && node.closest('.settings, .settings__body')) return true;
+            return !!(node.querySelector && node.querySelector('.settings, .settings__body, .settings-folder, .settings-param'));
+        } catch (error) {
+            return false;
+        }
     }
 
     function observeSettingsDom() {
@@ -2956,31 +3017,25 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             mutations.forEach(function (mutation) {
                 if (shouldCleanup) return;
                 Array.prototype.slice.call(mutation.addedNodes || []).forEach(function (node) {
-                    if (shouldCleanup || !node || node.nodeType !== 1) return;
-                    if ((node.matches && node.matches('.settings, .settings-folder, .settings-param, [data-component], [data-name], [data-param]')) ||
-                        (node.querySelector && node.querySelector('.settings-folder, .settings-param, [data-component], [data-name], [data-param]'))) {
-                        shouldCleanup = true;
-                    }
+                    if (!shouldCleanup && settingsMutationTouchesUi(node)) shouldCleanup = true;
                 });
             });
-            if (shouldCleanup) scheduleSettingsCleanup(0);
+            if (shouldCleanup) scheduleSettingsCleanup(0, 'mutation');
         });
         settingsObserver.observe(document.body, { childList: true, subtree: true });
     }
 
-    function scheduleSettingsCleanup(delay) {
+    function scheduleSettingsCleanup(delay, reason) {
         clearTimeout(settingsCleanupTimer);
         settingsCleanupTimer = setTimeout(function () {
-            removeHiddenSettingsComponents();
-            removeHiddenSettingsDom(document);
+            removeHiddenSettingsComponents(reason || 'scheduled');
         }, typeof delay === 'number' ? delay : 0);
     }
 
-    function scheduleSettingsCleanupBurst() {
-        [0, 80, 280, 900, 1800].forEach(function (delay) {
+    function scheduleSettingsCleanupBurst(reason) {
+        [0, 120, 500, 1400].forEach(function (delay) {
             setTimeout(function () {
-                removeHiddenSettingsComponents();
-                removeHiddenSettingsDom(document);
+                removeHiddenSettingsComponents((reason || 'burst') + '-' + delay);
             }, delay);
         });
     }
@@ -3708,8 +3763,9 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             screen.classList.add('lmui-search-screen');
             var query = readSearchQuery(root);
-            var count = searchResultCount(screen);
-            var loading = !!screen.querySelector('.search-source--loading, .search-looking, .content-loading, .loading-layer');
+            var rawCount = searchResultCount(screen);
+            var count = query.length >= 3 ? rawCount : 0;
+            var loading = query.length >= 3 && !!screen.querySelector('.search-source--loading, .search-looking, .content-loading, .loading-layer');
             var state = !query ? 'landing' : query.length < 3 ? 'typing' : loading ? 'loading' : count ? 'results' : 'empty';
             screen.setAttribute('data-lmui-search-state', state);
             screen.setAttribute('data-lmui-search-query-length', String(query.length));
@@ -3755,6 +3811,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         clearTimeout(searchSourcesTimer);
         searchSourcesTimer = 0;
         searchSourcesBridge = null;
+        searchScheduledValue = '';
+        searchResultSignatures = {};
         lastSearchState = '';
     }
 
@@ -3767,15 +3825,31 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         sources.search = function (query, immediately) {
             var context = this;
             var value = String(query || '');
-            clearTimeout(searchSourcesTimer);
-            searchSourcesTimer = 0;
-            if (immediately || value.length < 3) {
-                diagnostic('search.request.immediate', { queryLength: value.length, explicit: !!immediately });
+            searchRequestGeneration++;
+            if (value.length < 3 && !immediately) {
+                clearTimeout(searchSourcesTimer);
+                searchSourcesTimer = 0;
+                searchScheduledValue = '';
+                diagnostic('search.request.clear', { queryLength: value.length });
                 return originalSearch.call(context, value, true);
             }
+            if (immediately) {
+                clearTimeout(searchSourcesTimer);
+                searchSourcesTimer = 0;
+                searchScheduledValue = '';
+                diagnostic('search.request.immediate', { queryLength: value.length, explicit: true });
+                return originalSearch.call(context, value, true);
+            }
+            if (searchSourcesTimer && searchScheduledValue === value) {
+                if (diagnosticsVerbose) diagnostic('search.request.coalesced', { queryLength: value.length });
+                return;
+            }
+            clearTimeout(searchSourcesTimer);
+            searchScheduledValue = value;
             diagnostic('search.request.scheduled', { queryLength: value.length, delayMs: 420 });
             searchSourcesTimer = setTimeout(function () {
                 searchSourcesTimer = 0;
+                searchScheduledValue = '';
                 diagnostic('search.request.start', { queryLength: value.length });
                 originalSearch.call(context, value, true);
                 decorateSearch();
@@ -3785,21 +3859,29 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             sources.cancel = function () {
                 clearTimeout(searchSourcesTimer);
                 searchSourcesTimer = 0;
+                searchScheduledValue = '';
                 return originalCancel.apply(this, arguments);
             };
         }
         if (sources.listener && typeof sources.listener.follow === 'function') {
             sources.listener.follow('finded', function (event) {
-                diagnostic('search.results', {
-                    source: event && event.source && event.source.title || '',
-                    count: event && Number(event.count) || 0
-                });
+                var root = searchRoot();
+                var currentLength = root ? readSearchQuery(root).length : 0;
+                var sourceName = event && event.source && event.source.title || '';
+                var count = event && Number(event.count) || 0;
+                var signature = [searchRequestGeneration, count].join(':');
+                if (currentLength >= 3 && searchResultSignatures[sourceName] !== signature) {
+                    searchResultSignatures[sourceName] = signature;
+                    diagnostic('search.results', { source: sourceName, count: count, queryLength: currentLength, generation: searchRequestGeneration });
+                } else if (diagnosticsVerbose && currentLength < 3) {
+                    diagnostic('search.results.hidden_cache', { source: sourceName, count: count, queryLength: currentLength });
+                }
                 decorateSearch();
             });
             sources.listener.follow('toggle', decorateSearch);
             sources.listener.follow('create', decorateSearch);
         }
-        diagnostic('search.sources.optimized', { debounceMs: 420 });
+        diagnostic('search.sources.optimized', { debounceMs: 420, minimumQueryLength: 3 });
     }
 
     function searchControllerHealthy() {
@@ -4224,7 +4306,12 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         Lampa.Listener.follow('resize_end', function () {
             applyTheme();
             scheduleDecorate();
-            diagnostic('layout.resize', { layout: detectLayoutMode(), height: detectHeightMode(), viewport: layoutViewport() });
+            var viewport = layoutViewport();
+            var signature = [detectLayoutMode(), detectHeightMode(), viewport.width, viewport.height].join(':');
+            if (signature !== lastLayoutSignature) {
+                lastLayoutSignature = signature;
+                diagnostic('layout.resize', { layout: detectLayoutMode(), height: detectHeightMode(), viewport: viewport });
+            }
         });
         Lampa.Listener.follow('full', function (event) {
             if (!event) return;
