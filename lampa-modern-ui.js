@@ -1,14 +1,14 @@
-/* Lampa Modern UI 0.9.1
+/* Lampa Modern UI 0.10.0
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.9.1';
+    var VERSION = '0.10.0';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v091_ready__';
+    var READY_FLAG = '__lampa_modern_ui_v0100_ready__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
@@ -24,10 +24,12 @@
     var dataProbeStartedAt = 0;
     var recommendationProbeDone = false;
     var focusState = null;
-    var homeRow = null;
+    var originalMainComponent = null;
+    var mainComponentRegistered = false;
+    var activeModernMain = null;
+    var mainViewState = { rowId: '', contentId: '', fallbackIndex: 0, verticalPosition: 0, rowPositions: {} };
     var searchTimer = 0;
     var settingsCleanupTimer = 0;
-    var duplicateTimer = 0;
     var pendingDecorateRoots = [];
     var inputListenersInstalled = false;
     var lastInputMode = '';
@@ -53,13 +55,13 @@
     ];
 
     var HOME_TITLES = {
-        continue: 'Продолжить',
-        episodes: 'Новые серии',
+        watching_series: 'Сейчас смотрю',
+        continue_movies: 'Продолжить фильмы',
         watchlist: 'Мой список',
         recommendations: 'Для вас'
     };
 
-    var HOME_ORDER = ['continue', 'episodes', 'watchlist', 'recommendations'];
+    var HOME_ORDER = ['watching_series', 'continue_movies', 'watchlist', 'recommendations'];
 
     var CSS = String.raw`
 body.lampa-modern-ui {
@@ -245,10 +247,6 @@ body.lampa-modern-ui .items-line {
     margin-bottom: 0.58em;
 }
 
-body.lampa-modern-ui .items-line.lmui-home-duplicate {
-    display: none !important;
-}
-
 body.lampa-modern-ui .items-line__head {
     min-height: 3em;
     margin-bottom: 0.18em;
@@ -398,58 +396,109 @@ body.lampa-modern-ui.lmui-density-compact .items-line {
     margin-bottom: 0.34em;
 }
 
-/* Continue: compact landscape cards, never a full-screen hero. */
-body.lampa-modern-ui .lmui-row-continue {
-    margin-bottom: 0.9em;
+/* Owned main component. Every row has a stable ID and its own native Lampa scroll. */
+body.lampa-modern-ui .lmui-main-scroll > .scroll__content > .scroll__body {
+    padding-top: 0.35em;
+    padding-bottom: 4em;
 }
 
-body.lampa-modern-ui .lmui-row-continue .items-line__title {
+body.lampa-modern-ui .lmui-main {
+    min-height: 100%;
+}
+
+body.lampa-modern-ui .lmui-owned-row {
+    margin-bottom: 0.95em;
+}
+
+body.lampa-modern-ui .lmui-owned-row .items-line__body > .scroll {
+    overflow: visible;
+}
+
+body.lampa-modern-ui .lmui-owned-row .mapping--line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.62em;
+    padding-top: 0.35em;
+    padding-bottom: 1.05em;
+}
+
+body.lampa-modern-ui .lmui-row-watching_series,
+body.lampa-modern-ui .lmui-row-continue_movies {
+    margin-bottom: 1.05em;
+}
+
+body.lampa-modern-ui .lmui-row-watching_series .items-line__title,
+body.lampa-modern-ui .lmui-row-continue_movies .items-line__title {
     font-size: clamp(1.24em, 1.55vw, 1.62em);
 }
 
-body.lampa-modern-ui .lmui-row-continue .card {
+body.lampa-modern-ui .lmui-row-watching_series .card,
+body.lampa-modern-ui .lmui-row-continue_movies .card {
     width: clamp(16.5em, 23vw, 21.5em) !important;
     min-width: 16.5em;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card__view {
+body.lampa-modern-ui .lmui-row-watching_series .card__view,
+body.lampa-modern-ui .lmui-row-continue_movies .card__view {
     aspect-ratio: 16 / 9;
     min-height: 0;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card__img,
-body.lampa-modern-ui .lmui-row-continue .card__filter,
-body.lampa-modern-ui .lmui-row-continue .card__textbox {
+body.lampa-modern-ui .lmui-row-watching_series .card__img,
+body.lampa-modern-ui .lmui-row-watching_series .card__filter,
+body.lampa-modern-ui .lmui-row-watching_series .card__textbox,
+body.lampa-modern-ui .lmui-row-continue_movies .card__img,
+body.lampa-modern-ui .lmui-row-continue_movies .card__filter,
+body.lampa-modern-ui .lmui-row-continue_movies .card__textbox {
     width: 100%;
     height: 100%;
     object-fit: cover;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card__title {
+body.lampa-modern-ui .lmui-row-watching_series .card__title,
+body.lampa-modern-ui .lmui-row-continue_movies .card__title {
     font-size: 1.02em;
     font-weight: 700;
 }
 
-body.lampa-modern-ui .lmui-row-continue .time-line {
+body.lampa-modern-ui .lmui-row-watching_series .time-line,
+body.lampa-modern-ui .lmui-row-continue_movies .time-line {
     height: 0.38em;
 }
 
-body.lampa-modern-ui .lmui-episode-card .card__view {
+body.lampa-modern-ui .lmui-owned-card .card__view {
     position: relative;
 }
 
-body.lampa-modern-ui .lmui-episode-badge {
+body.lampa-modern-ui .lmui-card-context {
     position: absolute;
     left: 0.55em;
+    right: 0.55em;
     bottom: 0.55em;
-    z-index: 3;
-    padding: 0.3em 0.55em;
-    border-radius: 0.48em;
-    background: rgba(5, 8, 14, 0.92);
+    z-index: 4;
+    overflow: hidden;
+    padding: 0.34em 0.58em;
+    border-radius: 0.52em;
+    background: rgba(5, 8, 14, 0.9);
     color: #fff;
-    font-size: 0.82em;
+    font-size: 0.8em;
     font-weight: 720;
-    letter-spacing: 0.02em;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+body.lampa-modern-ui .lmui-card-context--new {
+    background: rgba(28, 86, 157, 0.94);
+}
+
+body.lampa-modern-ui .lmui-main-empty {
+    min-height: 16em;
+    display: grid;
+    place-items: center;
+    padding: 2em;
+    color: var(--lmui-muted);
+    text-align: center;
 }
 
 /* Controls */
@@ -968,7 +1017,8 @@ body.lampa-modern-ui.lmui-layout-tablet .modal__content {
     max-height: 86vh;
 }
 
-body.lampa-modern-ui.lmui-layout-tablet .lmui-row-continue .card {
+body.lampa-modern-ui.lmui-layout-tablet .lmui-row-watching_series .card,
+body.lampa-modern-ui.lmui-layout-tablet .lmui-row-continue_movies .card {
     width: min(39vw, 20em) !important;
     min-width: 15em;
 }
@@ -1023,7 +1073,8 @@ body.lampa-modern-ui.lmui-layout-phone.lmui-density-compact .card:not(.card--wid
     min-width: 7.7em;
 }
 
-body.lampa-modern-ui.lmui-layout-phone .lmui-row-continue .card {
+body.lampa-modern-ui.lmui-layout-phone .lmui-row-watching_series .card,
+body.lampa-modern-ui.lmui-layout-phone .lmui-row-continue_movies .card {
     width: min(76vw, 20em) !important;
     min-width: 14.5em;
 }
@@ -1194,20 +1245,6 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         });
     }
 
-    function stateCard(rowId, state, title, text) {
-        return {
-            id: 'lmui-state-' + rowId + '-' + state,
-            source: 'lmui',
-            title: title,
-            name: title,
-            lmui_row_id: rowId,
-            lmui_content_id: 'state:' + rowId + ':' + state,
-            lmui_state: state,
-            lmui_state_text: text,
-            poster: './img/img_broken.svg'
-        };
-    }
-
     function favoriteGet(type) {
         try {
             if (window.Lampa && Lampa.Favorite && typeof Lampa.Favorite.get === 'function') return asArray(Lampa.Favorite.get({ type: type }));
@@ -1217,43 +1254,85 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return [];
     }
 
-    function continueCards() {
-        var cards = [];
-        try {
-            if (window.Lampa && Lampa.Favorite && typeof Lampa.Favorite.continues === 'function') {
-                cards = asArray(Lampa.Favorite.continues('movie')).concat(asArray(Lampa.Favorite.continues('tv')));
-            }
-        } catch (error) {
-            return { status: 'error', results: [], error: error };
+    function favoriteContinues(type) {
+        if (!window.Lampa || !Lampa.Favorite || typeof Lampa.Favorite.continues !== 'function') {
+            return { available: false, items: [] };
         }
-        cards = dedupeCards(cards).slice(0, 12);
-        return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'continue') };
+        try {
+            return { available: true, items: asArray(Lampa.Favorite.continues(type)) };
+        } catch (error) {
+            return { available: true, items: [], error: error };
+        }
     }
 
-    function episodeCards() {
-        try {
-            var items = window.Lampa && Lampa.TimeTable && typeof Lampa.TimeTable.recently === 'function' ? asArray(Lampa.TimeTable.recently()) : [];
-            var seen = {};
-            var cards = [];
-            items.forEach(function (item) {
-                var sourceCard = item && item.card ? item.card : item;
-                if (!sourceCard) return;
-                var card = clone(sourceCard);
-                var key = contentId(card);
-                if (!key || seen[key]) return;
-                seen[key] = true;
-                var episode = item && item.episode || {};
-                if (episode.season_number !== undefined && episode.episode_number !== undefined) {
-                    card.lmui_episode_label = 'S' + episode.season_number + ' · E' + episode.episode_number;
-                    if (episode.name) card.lmui_episode_name = String(episode.name);
-                }
-                cards.push(card);
-            });
-            cards = cards.slice(0, 18);
-            return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'episodes') };
-        } catch (error) {
-            return { status: 'error', results: [], error: error };
+    function continueMovieCards() {
+        var source = favoriteContinues('movie');
+        if (!source.available || source.error) return { status: 'error', results: [], error: source.error || new Error('Favorite.continues unavailable') };
+        var cards = dedupeCards(source.items).slice(0, 14);
+        cards.forEach(function (card) { card.lmui_context_label = 'Продолжить просмотр'; });
+        return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'continue_movies') };
+    }
+
+    function recentEpisodeItems() {
+        if (!window.Lampa || !Lampa.TimeTable || typeof Lampa.TimeTable.recently !== 'function') {
+            return { available: false, items: [] };
         }
+        try {
+            return { available: true, items: asArray(Lampa.TimeTable.recently()) };
+        } catch (error) {
+            return { available: true, items: [], error: error };
+        }
+    }
+
+    function episodeLabel(episode) {
+        if (!episode) return '';
+        var season = episode.season_number !== undefined ? episode.season_number : episode.season;
+        var number = episode.episode_number !== undefined ? episode.episode_number : episode.episode;
+        if (season === undefined || number === undefined) return '';
+        return 'S' + season + ' · E' + number;
+    }
+
+    function watchingSeriesCards() {
+        var continued = favoriteContinues('tv');
+        var recent = recentEpisodeItems();
+        if (!continued.available && !recent.available) {
+            return { status: 'error', results: [], error: new Error('Series sources unavailable') };
+        }
+
+        var seen = {};
+        var cards = [];
+        var sourceError = continued.error || recent.error;
+
+        (recent.error ? [] : recent.items).forEach(function (item) {
+            var sourceCard = item && item.card ? item.card : item;
+            if (!sourceCard) return;
+            var card = clone(sourceCard);
+            var key = contentId(card);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            var label = episodeLabel(item && item.episode);
+            card.lmui_episode_label = label;
+            card.lmui_episode_name = item && item.episode && item.episode.name ? String(item.episode.name) : '';
+            card.lmui_context_label = label ? 'Новая серия · ' + label : 'Новая серия';
+            card.lmui_context_new = true;
+            cards.push(card);
+        });
+
+        (continued.error ? [] : continued.items).forEach(function (item) {
+            var card = clone(item && item.card ? item.card : item);
+            if (!card) return;
+            var key = contentId(card);
+            if (!key || seen[key]) return;
+            seen[key] = true;
+            var label = episodeLabel(card);
+            card.lmui_episode_label = label;
+            card.lmui_context_label = label ? 'Продолжить · ' + label : 'Продолжить сериал';
+            cards.push(card);
+        });
+
+        cards = cards.slice(0, 16);
+        if (!cards.length && sourceError) return { status: 'error', results: [], error: sourceError };
+        return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'watching_series') };
     }
 
     function recommendationCards() {
@@ -1273,6 +1352,9 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
     function watchlistCards() {
         try {
+            if (!window.Lampa || !Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') {
+                return { status: 'error', results: [], error: new Error('Favorite.get unavailable') };
+            }
             var cards = dedupeCards(favoriteGet('book')).slice(0, 18);
             return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'watchlist') };
         } catch (error) {
@@ -1282,82 +1364,485 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
     function readHomeData() {
         return {
-            continue: continueCards(),
-            episodes: episodeCards(),
+            watching_series: watchingSeriesCards(),
+            continue_movies: continueMovieCards(),
             watchlist: watchlistCards(),
             recommendations: recommendationCards()
         };
     }
 
     function visibleRowsForMode(mode) {
-        return mode === 'minimal' ? ['continue', 'recommendations'] : HOME_ORDER.slice();
+        return mode === 'minimal' ? ['watching_series', 'continue_movies', 'recommendations'] : HOME_ORDER.slice();
     }
 
-    function rowPayload(rowId, state) {
-        if (state.status === 'ready') return state.results;
-        if (state.status === 'loading' && rowId === 'recommendations') {
-            return [stateCard(rowId, 'loading', 'Подбираем рекомендации', 'Lampa ещё формирует подборку.')];
-        }
-        if (state.status === 'empty' && rowId === 'recommendations') {
-            return [stateCard(rowId, 'empty', 'Пока нет рекомендаций', 'Откройте или добавьте несколько фильмов и сериалов — подборка появится позже.')];
-        }
-        if (state.status === 'error') {
-            return [stateCard(rowId, 'error', 'Не удалось загрузить раздел', 'Нажмите, чтобы повторить чтение данных.')];
-        }
-        return [];
-    }
-
-    function rowCallback(rowId, results) {
-        return function (call) {
-            call({ title: HOME_TITLES[rowId], results: results });
+    function rowStateCopy(rowId, status) {
+        var copy = {
+            watching_series: {
+                empty: ['Пока нечего продолжать', 'Начните сериал или добавьте его в избранное. Новые непросмотренные серии появятся здесь.'],
+                error: ['Не удалось прочитать сериалы', 'Повторите чтение локальной истории и расписания.']
+            },
+            continue_movies: {
+                empty: ['Нет незавершённых фильмов', 'Начните фильм — он появится здесь с сохранённым прогрессом.'],
+                error: ['Не удалось прочитать историю', 'Повторите чтение локального списка продолжения.']
+            },
+            watchlist: {
+                empty: ['Мой список пока пуст', 'Добавляйте фильмы и сериалы в закладки, чтобы быстро возвращаться к ним.'],
+                error: ['Не удалось открыть список', 'Повторите чтение избранного.']
+            },
+            recommendations: {
+                loading: ['Подбираем рекомендации', 'Lampa ещё формирует подборку.'],
+                empty: ['Пока нет рекомендаций', 'Откройте или добавьте несколько фильмов и сериалов — подборка появится позже.'],
+                error: ['Не удалось загрузить рекомендации', 'Повторите чтение штатного модуля рекомендаций.']
+            }
         };
-    }
-
-    function homeCallbacks() {
-        var mode = String(storageGet(KEYS.homeMode, 'focused') || 'focused');
-        if (mode !== 'focused' && mode !== 'minimal') mode = 'focused';
-        var data = readHomeData();
-        return visibleRowsForMode(mode).map(function (rowId) {
-            return { id: rowId, results: rowPayload(rowId, data[rowId]) };
-        }).filter(function (row) {
-            return row.results.length > 0;
-        }).map(function (row) {
-            return rowCallback(row.id, row.results);
-        });
+        return copy[rowId] && copy[rowId][status] || ['Раздел недоступен', 'Повторите попытку.'];
     }
 
     function stateSignature(id, state) {
-        var ids = asArray(state && state.results).filter(function (card) {
-            return card && !card.lmui_state;
-        }).slice(0, 6).map(function (card) {
-            return card.lmui_content_id || contentId(card);
+        var ids = asArray(state && state.results).slice(0, 8).map(function (card) {
+            return card && (card.lmui_content_id || contentId(card));
         }).filter(Boolean);
-        return id + ':' + state.status + ':' + state.results.length + ':' + ids.join(',');
+        return id + ':' + state.status + ':' + asArray(state && state.results).length + ':' + ids.join(',');
+    }
+
+    function homeSignatureFromData(data) {
+        return HOME_ORDER.map(function (id) { return stateSignature(id, data[id]); }).join('|');
     }
 
     function homeSignature() {
-        var data = readHomeData();
-        return HOME_ORDER.map(function (id) {
-            return stateSignature(id, data[id]);
-        }).join('|');
+        return homeSignatureFromData(readHomeData());
     }
 
-    function registerHomeRow() {
-        if (homeRow || !window.Lampa || !Lampa.ContentRows || typeof Lampa.ContentRows.add !== 'function') return false;
-        homeRow = {
-            name: 'lmui_home',
-            title: 'Главная Modern UI',
-            index: 0,
-            screen: ['main'],
-            call: function () {
-                if (!boolValue(storageGet(KEYS.enabled, true), true)) return;
-                if (!boolValue(storageGet(KEYS.homeEnabled, true), true)) return;
-                var callbacks = homeCallbacks();
-                return callbacks.length ? callbacks : undefined;
+    function customHomeEnabled() {
+        return boolValue(storageGet(KEYS.enabled, true), true) && boolValue(storageGet(KEYS.homeEnabled, true), true);
+    }
+
+    function restoreScrollObject(scroll, position) {
+        if (!scroll || typeof position !== 'number' || !isFinite(position)) return;
+        try {
+            if (typeof scroll.position === 'function' && typeof scroll.shift === 'function') {
+                var current = Number(scroll.position()) || 0;
+                scroll.shift(current - position);
             }
+        } catch (error) {
+            console.warn('[Lampa Modern UI] owned scroll restore failed:', error);
+        }
+    }
+
+    function openHomeCard(data, object) {
+        if (!data || data.lmui_state) return;
+        try {
+            if (Lampa.Router && typeof Lampa.Router.call === 'function') {
+                Lampa.Router.call('full', data);
+                return;
+            }
+            if (Lampa.Activity && typeof Lampa.Activity.push === 'function') {
+                Lampa.Activity.push({
+                    url: '',
+                    title: data.title || data.name || '',
+                    component: 'full',
+                    id: data.id,
+                    method: mediaType(data),
+                    card: data,
+                    source: data.source || object && object.source || 'tmdb'
+                });
+            }
+        } catch (error) {
+            console.warn('[Lampa Modern UI] open card failed:', error);
+        }
+    }
+
+    function updateHomeBackground(data) {
+        try {
+            if (Lampa.Background && typeof Lampa.Background.change === 'function' && Lampa.Utils && typeof Lampa.Utils.cardImgBackground === 'function') {
+                Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+            }
+        } catch (error) {}
+    }
+
+    function ModernMainComponent(object) {
+        var self = this;
+        var verticalScroll = new Lampa.Scroll({ mask: true, over: true });
+        var renderNode = verticalScroll.render(true);
+        var bodyNode = verticalScroll.body(true);
+        var rows = [];
+        var builtSignature = '';
+        var created = false;
+        var destroyed = false;
+        var restoring = false;
+        var currentRowIndex = 0;
+        var currentCardIndex = 0;
+
+        renderNode.classList.add('lmui-main-scroll');
+        bodyNode.classList.add('lmui-main');
+
+        function stateNode(rowId, status) {
+            var copy = rowStateCopy(rowId, status);
+            var node = document.createElement('div');
+            node.className = 'card selector lmui-state-card lmui-owned-card';
+            node.card_data = {
+                lmui_row_id: rowId,
+                lmui_content_id: 'state:' + rowId + ':' + status,
+                lmui_state: status,
+                lmui_state_row: rowId,
+                title: copy[0]
+            };
+            node.setAttribute('data-lmui-content', node.card_data.lmui_content_id);
+            var view = document.createElement('div');
+            view.className = 'card__view';
+            var state = document.createElement('div');
+            state.className = 'lmui-row-state';
+            var title = document.createElement('div');
+            title.className = 'lmui-row-state__title';
+            title.textContent = copy[0];
+            var text = document.createElement('div');
+            text.className = 'lmui-row-state__text';
+            text.textContent = copy[1];
+            state.appendChild(title);
+            state.appendChild(text);
+            if (status === 'error') {
+                var action = document.createElement('div');
+                action.className = 'lmui-row-state__action';
+                action.textContent = 'Повторить';
+                state.appendChild(action);
+            }
+            view.appendChild(state);
+            node.appendChild(view);
+            var lastRetryAt = 0;
+            function retry(event) {
+                if (status !== 'error') return;
+                var timestamp = Date.now ? Date.now() : new Date().getTime();
+                if (timestamp - lastRetryAt < 350) return;
+                lastRetryAt = timestamp;
+                if (event && event.preventDefault) event.preventDefault();
+                if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
+                self.retry(rowId);
+            }
+            node.addEventListener('hover:enter', retry);
+            node.addEventListener('click', retry);
+            node.addEventListener('hover:focus', function () { self.onFocusNode(node); });
+            return node;
+        }
+
+        function addContext(node, data) {
+            if (!data || !data.lmui_context_label) return;
+            var view = node.querySelector('.card__view');
+            if (!view || view.querySelector('.lmui-card-context')) return;
+            var context = document.createElement('div');
+            context.className = 'lmui-card-context' + (data.lmui_context_new ? ' lmui-card-context--new' : '');
+            context.textContent = data.lmui_context_label;
+            view.appendChild(context);
+        }
+
+        function createCard(row, data) {
+            var node;
+            var instance;
+            var lastEnterAt = 0;
+            try {
+                instance = new Lampa.Card(data, { card_wide: row.wide, object: object || {} });
+                instance.onFocus = function (target) { self.onFocusNode(target); };
+                instance.onHover = function () { updateHomeBackground(data); };
+                instance.onTouch = function (target) { self.onFocusNode(target); };
+                instance.onEnter = function () {
+                    var timestamp = Date.now ? Date.now() : new Date().getTime();
+                    if (timestamp - lastEnterAt < 300) return;
+                    lastEnterAt = timestamp;
+                    openHomeCard(data, object);
+                };
+                instance.create();
+                node = instance.render(true);
+            } catch (error) {
+                console.warn('[Lampa Modern UI] card creation failed:', error);
+                return null;
+            }
+            node.classList.add('lmui-owned-card');
+            node.setAttribute('data-lmui-content', data.lmui_content_id || contentId(data));
+            node.setAttribute('data-lmui-decorated', VERSION);
+            node.addEventListener('click', function () {
+                var timestamp = Date.now ? Date.now() : new Date().getTime();
+                if (timestamp - lastEnterAt < 300) return;
+                lastEnterAt = timestamp;
+                openHomeCard(data, object);
+            });
+            addContext(node, data);
+            return { node: node, instance: instance };
+        }
+
+        function buildRow(rowId, state) {
+            var row = {
+                id: rowId,
+                state: state,
+                wide: rowId === 'watching_series' || rowId === 'continue_movies',
+                cards: [],
+                nodes: []
+            };
+            var line = document.createElement('div');
+            line.className = 'items-line lmui-owned-row lmui-home-row lmui-row-' + rowId;
+            line.setAttribute('data-lmui-row', rowId);
+            var head = document.createElement('div');
+            head.className = 'items-line__head';
+            var title = document.createElement('div');
+            title.className = 'items-line__title';
+            title.textContent = HOME_TITLES[rowId];
+            head.appendChild(title);
+            var lineBody = document.createElement('div');
+            lineBody.className = 'items-line__body';
+            var horizontal = new Lampa.Scroll({ horizontal: true, over: true, scroll_by_item: true });
+            horizontal.body(true).classList.add('mapping--line');
+            lineBody.appendChild(horizontal.render(true));
+            line.appendChild(head);
+            line.appendChild(lineBody);
+            row.line = line;
+            row.scroll = horizontal;
+
+            if (state.status === 'ready' && state.results.length) {
+                state.results.forEach(function (data) {
+                    var createdCard = createCard(row, data);
+                    if (!createdCard) return;
+                    row.cards.push(createdCard.instance);
+                    row.nodes.push(createdCard.node);
+                    horizontal.append(createdCard.node);
+                    try { if (typeof createdCard.instance.visible === 'function') createdCard.instance.visible(); } catch (error) {}
+                });
+            } else {
+                var placeholder = stateNode(rowId, state.status);
+                row.nodes.push(placeholder);
+                horizontal.append(placeholder);
+            }
+            return row;
+        }
+
+        function saveViewState() {
+            if (destroyed) return;
+            mainViewState.verticalPosition = typeof verticalScroll.position === 'function' ? Number(verticalScroll.position()) || 0 : 0;
+            rows.forEach(function (row) {
+                mainViewState.rowPositions[row.id] = typeof row.scroll.position === 'function' ? Number(row.scroll.position()) || 0 : 0;
+            });
+            var row = rows[currentRowIndex];
+            var node = row && row.nodes[currentCardIndex];
+            var data = node && cardData(node);
+            if (row && node && data) {
+                mainViewState.rowId = row.id;
+                mainViewState.contentId = data.lmui_content_id || contentId(data);
+                mainViewState.fallbackIndex = currentCardIndex;
+            }
+        }
+
+        function clearRows() {
+            rows.forEach(function (row) {
+                row.cards.forEach(function (card) { try { if (card && typeof card.destroy === 'function') card.destroy(); } catch (error) {} });
+                try { if (row.scroll && typeof row.scroll.destroy === 'function') row.scroll.destroy(); } catch (error) {}
+            });
+            rows = [];
+            verticalScroll.clear();
+        }
+
+        function selectedNode() {
+            var row = rows[currentRowIndex];
+            return row && row.nodes[currentCardIndex] || null;
+        }
+
+        function focusNode(node, silent) {
+            if (!node) return false;
+            var rowIndex = -1;
+            var cardIndex = -1;
+            rows.some(function (row, ri) {
+                var ci = row.nodes.indexOf(node);
+                if (ci < 0) return false;
+                rowIndex = ri;
+                cardIndex = ci;
+                return true;
+            });
+            if (rowIndex < 0) return false;
+            currentRowIndex = rowIndex;
+            currentCardIndex = cardIndex;
+            try {
+                if (window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') {
+                    Lampa.Controller.collectionFocus($(node), $(renderNode), true);
+                } else if (window.$) $(node).trigger('hover:focus');
+            } catch (error) {
+                console.warn('[Lampa Modern UI] main focus failed:', error);
+            }
+            if (!silent) self.onFocusNode(node);
+            return true;
+        }
+
+        function restoreViewState() {
+            if (!rows.length) return false;
+            restoring = true;
+            rows.forEach(function (row) { restoreScrollObject(row.scroll, Number(mainViewState.rowPositions[row.id]) || 0); });
+            restoreScrollObject(verticalScroll, Number(mainViewState.verticalPosition) || 0);
+            var rowIndex = rows.map(function (row) { return row.id; }).indexOf(mainViewState.rowId);
+            if (rowIndex < 0) rowIndex = 0;
+            var row = rows[rowIndex];
+            var cardIndex = row.nodes.map(function (node) {
+                var data = cardData(node);
+                return data && (data.lmui_content_id || contentId(data));
+            }).indexOf(mainViewState.contentId);
+            if (cardIndex < 0) cardIndex = Math.min(Number(mainViewState.fallbackIndex) || 0, Math.max(0, row.nodes.length - 1));
+            var target = row.nodes[cardIndex] || rows[0].nodes[0];
+            var focused = focusNode(target, true);
+            restoring = false;
+            if (focused) {
+                var hscroll = row.scroll.render(true);
+                if (!cardVisibleInScroll(target, hscroll)) {
+                    try { row.scroll.immediate(target, true); } catch (error) {}
+                }
+            }
+            return focused;
+        }
+
+        function build(force) {
+            if (destroyed) return;
+            var data = readHomeData();
+            var signature = homeSignatureFromData(data);
+            if (!force && created && signature === builtSignature) return;
+            saveViewState();
+            clearRows();
+            var mode = String(storageGet(KEYS.homeMode, 'focused') || 'focused');
+            if (mode !== 'focused' && mode !== 'minimal') mode = 'focused';
+            visibleRowsForMode(mode).forEach(function (rowId) {
+                var row = buildRow(rowId, data[rowId]);
+                rows.push(row);
+                verticalScroll.append(row.line);
+            });
+            if (!rows.length) {
+                var empty = document.createElement('div');
+                empty.className = 'lmui-main-empty';
+                empty.textContent = 'Главная пока пуста.';
+                verticalScroll.append(empty);
+            }
+            builtSignature = signature;
+            created = true;
+            if (activeModernMain === self) {
+                try { Lampa.Controller.collectionSet($(renderNode)); } catch (error) {}
+                restoreViewState();
+            }
+        }
+
+        function moveHorizontal(step) {
+            var row = rows[currentRowIndex];
+            if (!row) return;
+            var next = currentCardIndex + step;
+            if (next < 0) {
+                if (Lampa.Controller && typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('menu');
+                return;
+            }
+            if (next >= row.nodes.length) return;
+            focusNode(row.nodes[next]);
+        }
+
+        function moveVertical(step) {
+            var nextRow = currentRowIndex + step;
+            if (nextRow < 0) {
+                if (Lampa.Controller && typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('head');
+                return;
+            }
+            if (nextRow >= rows.length) return;
+            var row = rows[nextRow];
+            focusNode(row.nodes[Math.min(currentCardIndex, Math.max(0, row.nodes.length - 1))]);
+        }
+
+        function installController() {
+            if (!Lampa.Controller || typeof Lampa.Controller.add !== 'function') return;
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    try { Lampa.Controller.collectionSet($(renderNode)); } catch (error) {}
+                    if (!restoreViewState()) focusNode(rows[0] && rows[0].nodes[0]);
+                },
+                left: function () { moveHorizontal(-1); },
+                right: function () { moveHorizontal(1); },
+                up: function () { moveVertical(-1); },
+                down: function () { moveVertical(1); },
+                enter: function () {
+                    var node = selectedNode();
+                    if (node && window.$) $(node).trigger('hover:enter');
+                },
+                back: function () {
+                    saveViewState();
+                    if (Lampa.Activity && typeof Lampa.Activity.backward === 'function') Lampa.Activity.backward();
+                }
+            });
+            if (typeof Lampa.Controller.toggle === 'function') Lampa.Controller.toggle('content');
+        }
+
+        self.onFocusNode = function (node) {
+            if (!node || restoring) return;
+            var rowIndex = -1;
+            var cardIndex = -1;
+            rows.some(function (row, ri) {
+                var ci = row.nodes.indexOf(node);
+                if (ci < 0) return false;
+                rowIndex = ri;
+                cardIndex = ci;
+                return true;
+            });
+            if (rowIndex < 0) return;
+            currentRowIndex = rowIndex;
+            currentCardIndex = cardIndex;
+            var row = rows[rowIndex];
+            try { row.scroll.update(node); } catch (error) {}
+            try { verticalScroll.update(row.line); } catch (error) {}
+            var data = cardData(node);
+            if (data && !data.lmui_state) updateHomeBackground(data);
+            saveViewState();
+            focusState = {
+                rowId: row.id,
+                contentId: data && (data.lmui_content_id || contentId(data)) || '',
+                fallbackIndex: cardIndex,
+                scrollPosition: typeof row.scroll.position === 'function' ? Number(row.scroll.position()) || 0 : 0,
+                verticalPosition: typeof verticalScroll.position === 'function' ? Number(verticalScroll.position()) || 0 : 0
+            };
         };
-        Lampa.ContentRows.add(homeRow);
-        storageSet('content_rows_lmui_home', boolValue(storageGet(KEYS.homeEnabled, true), true));
+
+        self.retry = function (rowId) {
+            if (rowId === 'recommendations') resetRecommendationProbe();
+            build(true);
+            probeHomeData();
+        };
+
+        self.refresh = function (reason, force) {
+            if (destroyed) return;
+            build(!!force || reason === 'home-mode');
+        };
+
+        self.restoreFocus = restoreViewState;
+        self.saveState = saveViewState;
+        self.create = function () { build(true); return self.render(); };
+        self.start = function () {
+            activeModernMain = self;
+            build(false);
+            installController();
+        };
+        self.pause = saveViewState;
+        self.stop = saveViewState;
+        self.render = function () { return window.$ ? $(renderNode) : renderNode; };
+        self.destroy = function () {
+            saveViewState();
+            destroyed = true;
+            if (activeModernMain === self) activeModernMain = null;
+            clearRows();
+            try { verticalScroll.destroy(); } catch (error) {}
+        };
+    }
+
+    function MainComponentProxy(object) {
+        if (!customHomeEnabled() || !originalMainComponent) return new originalMainComponent(object);
+        try {
+            return new ModernMainComponent(object);
+        } catch (error) {
+            console.warn('[Lampa Modern UI] custom main fallback:', error);
+            return new originalMainComponent(object);
+        }
+    }
+
+    function registerMainComponent() {
+        if (mainComponentRegistered || !window.Lampa || !Lampa.Component || typeof Lampa.Component.get !== 'function' || typeof Lampa.Component.add !== 'function') return false;
+        originalMainComponent = Lampa.Component.get('main');
+        if (!originalMainComponent) return false;
+        Lampa.Component.add('main', MainComponentProxy);
+        mainComponentRegistered = true;
+        storageSet('content_rows_lmui_home', false);
         return true;
     }
 
@@ -1380,19 +1865,23 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         refreshTimer = setTimeout(function () {
             try {
                 var active = activeActivity();
-                if (!active || active.component !== 'main' || !Lampa.Activity || typeof Lampa.Activity.refresh !== 'function') return;
+                if (!active || active.component !== 'main') return;
                 var timestamp = Date.now ? Date.now() : new Date().getTime();
                 var elapsed = timestamp - lastMainRefreshAt;
-                if (elapsed < 700) {
-                    scheduleHomeRefresh(reason || 'throttled-update', 720 - elapsed);
+                if (elapsed < 500) {
+                    scheduleHomeRefresh(reason || 'throttled-update', 520 - elapsed);
                     return;
                 }
                 lastMainRefreshAt = timestamp;
-                Lampa.Activity.refresh(false);
+                if (activeModernMain && customHomeEnabled()) {
+                    activeModernMain.refresh(reason || 'update');
+                    return;
+                }
+                if (Lampa.Activity && typeof Lampa.Activity.refresh === 'function') Lampa.Activity.refresh(false);
             } catch (error) {
                 console.warn('[Lampa Modern UI] home refresh failed:', reason || 'update', error);
             }
-        }, typeof delay === 'number' ? delay : 180);
+        }, typeof delay === 'number' ? delay : 140);
     }
 
     function resetRecommendationProbe() {
@@ -1551,141 +2040,14 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function rowIdFromLine(line) {
-        var card = line && line.querySelector ? line.querySelector('.card') : null;
+        if (!line) return '';
+        if (line.getAttribute) {
+            var owned = line.getAttribute('data-lmui-row');
+            if (owned) return owned;
+        }
+        var card = line.querySelector ? line.querySelector('.card') : null;
         var data = cardData(card);
         return data && data.lmui_row_id || '';
-    }
-
-    function decorateStateCard(card) {
-        var data = cardData(card);
-        if (!data || !data.lmui_state) return;
-        card.classList.add('lmui-state-card');
-        var view = card.querySelector('.card__view');
-        if (!view || view.querySelector('.lmui-row-state')) return;
-        view.innerHTML = '';
-        var state = document.createElement('div');
-        state.className = 'lmui-row-state';
-        state.innerHTML = '<div class="lmui-row-state__title"></div><div class="lmui-row-state__text"></div>' + (data.lmui_state === 'error' ? '<div class="lmui-row-state__action">Повторить</div>' : '');
-        state.querySelector('.lmui-row-state__title').textContent = data.title || '';
-        state.querySelector('.lmui-row-state__text').textContent = data.lmui_state_text || '';
-        view.appendChild(state);
-        var title = card.querySelector('.card__title');
-        var age = card.querySelector('.card__age');
-        if (title) title.remove();
-        if (age) age.remove();
-    }
-
-    function backdropUrl(data) {
-        if (!data || !data.backdrop_path) return '';
-        try {
-            if (window.Lampa && Lampa.Api && typeof Lampa.Api.img === 'function') return Lampa.Api.img(data.backdrop_path, 'w500');
-        } catch (error) {}
-        return String(data.backdrop_path || '');
-    }
-
-    function decorateContinueCard(card) {
-        var data = cardData(card);
-        if (!data || data.lmui_row_id !== 'continue') return;
-        card.classList.add('lmui-continue-card');
-        var image = card.querySelector('.card__img');
-        var backdrop = backdropUrl(data);
-        if (image && backdrop && image.getAttribute('data-lmui-backdrop') !== backdrop) {
-            image.setAttribute('data-lmui-backdrop', backdrop);
-            image.src = backdrop;
-        }
-    }
-
-    function decorateEpisodeCard(card) {
-        var data = cardData(card);
-        if (!data || data.lmui_row_id !== 'episodes' || !data.lmui_episode_label) return;
-        card.classList.add('lmui-episode-card');
-        var view = card.querySelector('.card__view');
-        if (!view || view.querySelector('.lmui-episode-badge')) return;
-        var badge = document.createElement('div');
-        badge.className = 'lmui-episode-badge';
-        badge.textContent = data.lmui_episode_label;
-        view.appendChild(badge);
-    }
-
-    function overlapRatio(a, b) {
-        if (!a.length || !b.length) return 0;
-        var lookup = {};
-        a.forEach(function (id) { lookup[id] = true; });
-        var matches = b.filter(function (id) { return lookup[id]; }).length;
-        return matches / Math.min(a.length, b.length);
-    }
-
-    function decorateHomeLine(line) {
-        if (!line || !line.querySelector) return '';
-        var rowId = rowIdFromLine(line);
-        line.classList.remove('lmui-row-continue', 'lmui-row-episodes', 'lmui-row-recommendations', 'lmui-row-watchlist', 'lmui-home-row', 'lmui-home-hidden');
-        if (!rowId) return '';
-        line.dataset.lmuiRow = rowId;
-        line.classList.add('lmui-home-row', 'lmui-row-' + rowId);
-        Array.prototype.slice.call(line.querySelectorAll('.card')).forEach(function (card) {
-            card.classList.remove('lmui-hero-card');
-            decorateStateCard(card);
-            if (rowId === 'continue') decorateContinueCard(card);
-            if (rowId === 'episodes') decorateEpisodeCard(card);
-            card.setAttribute('data-lmui-decorated', VERSION);
-        });
-        return rowId;
-    }
-
-    function reconcileHomeDuplicates() {
-        clearTimeout(duplicateTimer);
-        duplicateTimer = 0;
-        if (activeComponent() !== 'main') return;
-        var activity = document.querySelector('.activity--active');
-        if (!activity) return;
-        var customEnabled = boolValue(storageGet(KEYS.enabled, true), true) && boolValue(storageGet(KEYS.homeEnabled, true), true);
-        var lines = Array.prototype.slice.call(activity.querySelectorAll('.items-line'));
-        var customSets = {};
-
-        lines.forEach(function (line) {
-            line.classList.remove('lmui-home-duplicate');
-            var rowId = rowIdFromLine(line);
-            if (!rowId) return;
-            customSets[rowId] = Array.prototype.slice.call(line.querySelectorAll('.card')).map(function (card) {
-                var data = cardData(card);
-                return data && data.lmui_content_id && !data.lmui_state ? data.lmui_content_id : '';
-            }).filter(Boolean).slice(0, 8);
-        });
-
-        if (!customEnabled) return;
-        lines.forEach(function (line) {
-            if (rowIdFromLine(line)) return;
-            var ids = Array.prototype.slice.call(line.querySelectorAll('.card')).map(function (card) {
-                return contentId(cardData(card));
-            }).filter(Boolean).slice(0, 8);
-            if (ids.length < 3) return;
-            var duplicate = Object.keys(customSets).some(function (rowId) {
-                return customSets[rowId].length >= 3 && overlapRatio(customSets[rowId], ids) >= 0.6;
-            });
-            if (duplicate) line.classList.add('lmui-home-duplicate');
-        });
-    }
-
-    function scheduleDuplicateReconcile() {
-        clearTimeout(duplicateTimer);
-        duplicateTimer = setTimeout(reconcileHomeDuplicates, 60);
-    }
-
-    function decorateHomeRows(root) {
-        if (activeComponent() !== 'main') return;
-        var scope = root || document.querySelector('.activity--active');
-        if (!scope || !scope.querySelectorAll) return;
-        var lines = [];
-        if (scope.matches && scope.matches('.items-line')) lines.push(scope);
-        else {
-            var parentLine = scope.closest && scope.closest('.items-line');
-            if (parentLine) lines.push(parentLine);
-            Array.prototype.slice.call(scope.querySelectorAll('.items-line')).forEach(function (line) {
-                if (lines.indexOf(line) < 0) lines.push(line);
-            });
-        }
-        lines.forEach(decorateHomeLine);
-        if (lines.length) scheduleDuplicateReconcile();
     }
 
     function decoratePrimaryAction(root) {
@@ -1758,7 +2120,6 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     function decorateNode(root) {
         if (!root || root.nodeType !== 1) return;
         var component = activeComponent();
-        if (component === 'main') decorateHomeRows(root);
         if (component === 'full') decorateDetail(root.closest && root.closest('.activity--active') || document.querySelector('.activity--active'));
         if (component === 'search' || root.closest && root.closest('.search, .search-box') || root.querySelector && root.querySelector('.search, .search-box')) decorateSearch();
         if (component === 'settings') scheduleSettingsCleanup();
@@ -1787,7 +2148,14 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
     function observeActiveActivity() {
         var root = document.querySelector('.activity--active');
-        if (!root || root === observedRoot || !window.MutationObserver) return;
+        if (!root || !window.MutationObserver) return;
+        if (activeComponent() === 'main' && activeModernMain) {
+            if (activeObserver) activeObserver.disconnect();
+            activeObserver = null;
+            observedRoot = root;
+            return;
+        }
+        if (root === observedRoot) return;
         if (activeObserver) activeObserver.disconnect();
         observedRoot = root;
         activeObserver = new MutationObserver(function (records) {
@@ -1857,7 +2225,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             rowId: data.lmui_row_id || rowIdFromLine(line),
             contentId: data.lmui_content_id || contentId(data),
             fallbackIndex: Math.max(0, cards.indexOf(card)),
-            scrollPosition: readScrollPosition(scroll)
+            scrollPosition: readScrollPosition(scroll),
+            verticalPosition: mainViewState.verticalPosition || 0
         };
     }
 
@@ -1868,6 +2237,10 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function restoreFocus() {
+        if (activeModernMain && activeComponent() === 'main' && typeof activeModernMain.restoreFocus === 'function') {
+            activeModernMain.restoreFocus();
+            return;
+        }
         if (!focusState || activeComponent() !== 'main') return;
         var lines = Array.prototype.slice.call(document.querySelectorAll('.activity--active .items-line'));
         var line = lines.filter(function (candidate) { return rowIdFromLine(candidate) === focusState.rowId; })[0];
@@ -1945,9 +2318,12 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
                 if (event && event.preventDefault) event.preventDefault();
                 if (data.lmui_state !== 'error') return;
-                resetRecommendationProbe();
-                probeHomeData();
-                scheduleHomeRefresh('state-retry', 50);
+                if (activeModernMain && typeof activeModernMain.retry === 'function') activeModernMain.retry(data.lmui_state_row || data.lmui_row_id);
+                else {
+                    resetRecommendationProbe();
+                    probeHomeData();
+                    scheduleHomeRefresh('state-retry', 50);
+                }
             });
             $(document).on('input.lmui change.lmui keyup.lmui', '.search__input, .simple-keyboard-input, .search-box input', decorateSearch);
         } catch (error) {
@@ -1958,25 +2334,26 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     function addSettings() {
         var icon = '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="5" width="24" height="22" rx="7" stroke="currentColor" stroke-width="2"/><path d="M9 19.5 13.2 15l3.3 3.1L23 11.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="23" cy="11.5" r="2" fill="currentColor"/></svg>';
         Lampa.SettingsApi.addComponent({ component: PLUGIN_ID, name: 'Интерфейс', icon: icon });
-        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.enabled, type: 'trigger', default: true }, field: { name: 'Новый интерфейс', description: 'Единое оформление главной, карточек, поиска, фильма и настроек.' }, onChange: function () { applyTheme(); scheduleDecorate(); } });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.enabled, type: 'trigger', default: true }, field: { name: 'Новый интерфейс', description: 'Единое оформление главной, карточек, поиска, фильма и настроек.' }, onChange: function () { applyTheme(); scheduleDecorate(); scheduleHomeRefresh('ui-enabled', 20); } });
         Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.density, type: 'select', values: { comfortable: 'Комфортно', compact: 'Компактно' }, default: 'comfortable' }, field: { name: 'Размер карточек', description: 'Компактный режим показывает больше контента в строке.' }, onChange: applyTheme });
         Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.motion, type: 'select', values: { calm: 'Плавно', minimal: 'Без анимаций' }, default: 'calm' }, field: { name: 'Движение', description: 'Отключает декоративные переходы, сохраняя состояния фокуса.' }, onChange: applyTheme });
         Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.performance, type: 'select', values: { standard: 'Обычный', lite: 'Экономный' }, default: 'standard' }, field: { name: 'Производительность', description: 'Экономный режим отключает динамический фон и тяжёлые тени.' }, onChange: applyTheme });
-        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeEnabled, type: 'trigger', default: true }, field: { name: 'Новая главная', description: 'Добавляет продолжение, новые серии, мой список и штатные рекомендации.' }, onChange: function () { storageSet('content_rows_lmui_home', boolValue(storageGet(KEYS.homeEnabled, true), true)); scheduleHomeRefresh('home-enabled'); } });
-        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeMode, type: 'select', values: { focused: 'Полная', minimal: 'Минимальная' }, default: 'focused' }, field: { name: 'Состав главной', description: 'Минимальная оставляет только «Продолжить» и «Для вас».' }, onChange: function () { scheduleHomeRefresh('home-mode'); } });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeEnabled, type: 'trigger', default: true }, field: { name: 'Новая главная', description: 'Заменяет штатную главную на стабильные блоки просмотра, списка и рекомендаций.' }, onChange: function () { storageSet('content_rows_lmui_home', false); scheduleHomeRefresh('home-enabled', 20); } });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeMode, type: 'select', values: { focused: 'Полная', minimal: 'Минимальная' }, default: 'focused' }, field: { name: 'Состав главной', description: 'Минимальная оставляет просмотр в процессе и рекомендации.' }, onChange: function () { scheduleHomeRefresh('home-mode'); } });
     }
 
     function destructiveCleanup() {
         if (boolValue(storageGet(CLEANUP_KEY, false), false)) return;
         storageSet('lpersonal_profile_v1', '');
         storageSet('content_rows_lpersonal_home', false);
+        storageSet('content_rows_lmui_home', false);
         storageSet('lpersonal_enabled', false);
         storageSet('lpersonal_card_panel', false);
         storageSet(CLEANUP_KEY, true);
     }
 
     function readyToStart() {
-        return !!(document.head && document.body && window.Lampa && Lampa.Storage && Lampa.SettingsApi && Lampa.ContentRows);
+        return !!(document.head && document.body && window.Lampa && Lampa.Storage && Lampa.SettingsApi && Lampa.Component && Lampa.Scroll && Lampa.Card && Lampa.Controller);
     }
 
     function followEvents() {
@@ -2006,6 +2383,11 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             if (event.type === 'start' || event.type === 'complite') scheduleDecorate(event.body && event.body[0]);
         });
         Lampa.Listener.follow('favorite', function () { scheduleHomeRefresh('favorite'); });
+        Lampa.Listener.follow('state:changed', function (event) {
+            if (!event || ['favorite', 'timetable', 'timeline'].indexOf(event.target) < 0) return;
+            scheduleHomeRefresh('state-' + event.target, 80);
+        });
+        Lampa.Listener.follow('timeline', function () { scheduleHomeRefresh('timeline', 120); });
         Lampa.Listener.follow('app', function (event) {
             if (event && event.type === 'ready') scheduleSettingsCleanup(50);
         });
@@ -2030,7 +2412,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         removeHiddenSettingsComponents();
         try { if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('lampa_personal'); } catch (error) {}
         addSettings();
-        registerHomeRow();
+        registerMainComponent();
         applyTheme();
         installInteractionHandlers();
         installInputModeListeners();
@@ -2040,6 +2422,16 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         resetRecommendationProbe();
         lastHomeSignature = homeSignature();
         probeHomeData();
+        scheduleHomeRefresh('component-register', 120);
+        if (window.__LMUI_TEST_MODE__) {
+            window.__LMUI_TEST_API__ = {
+                readHomeData: readHomeData,
+                homeSignature: homeSignature,
+                visibleRowsForMode: visibleRowsForMode,
+                customHomeEnabled: customHomeEnabled,
+                componentRegistered: function () { return mainComponentRegistered; }
+            };
+        }
         window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
         console.info('[Lampa Modern UI] v' + VERSION + ' loaded');
     }
