@@ -1,4 +1,4 @@
-/* Lampa Modern UI 0.11.0 — permanent Shots guard. */
+/* Lampa Modern UI 0.12.0 — permanent Shots guard. */
 (function () {
     'use strict';
 
@@ -239,17 +239,17 @@
     }
 })();
 
-/* Lampa Modern UI 0.11.0
+/* Lampa Modern UI 0.12.0
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.11.0';
+    var VERSION = '0.12.0';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v0110_ready__';
+    var READY_FLAG = '__lampa_modern_ui_v0120_ready__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
@@ -276,6 +276,14 @@
     var lastInputMode = '';
     var detailNeedsInitialFocus = false;
     var detailUserInteracted = false;
+    var detailGeneration = 0;
+    var activeDetailData = null;
+    var activeDetailCard = null;
+    var activeDetailKey = '';
+    var episodeFocusObserver = null;
+    var episodeFocusObserverTimer = 0;
+    var episodeRestorePending = false;
+    var DETAIL_MEMORY_KEY = 'lmui_detail_episode_v1';
     var settingsObserver = null;
     var settingsGuardInstalled = false;
     var searchObserver = null;
@@ -916,6 +924,140 @@ body.lampa-modern-ui .explorer-card__head-img.focus {
     border-color: var(--lmui-accent);
     background: var(--lmui-accent-soft);
     box-shadow: var(--lmui-focus-ring);
+}
+
+/* Series detail workflow */
+body.lampa-modern-ui .lmui-series-summary {
+    width: min(100%, 58em);
+    margin: 0.9em 0 0.3em;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 0.22em solid var(--lmui-accent);
+}
+
+body.lampa-modern-ui .lmui-series-summary__eyebrow {
+    color: var(--lmui-accent-strong);
+    font-size: 0.78em;
+    font-weight: 760;
+    letter-spacing: 0.085em;
+    text-transform: uppercase;
+}
+
+body.lampa-modern-ui .lmui-series-summary__title {
+    overflow: hidden;
+    display: -webkit-box;
+    margin-top: 0.2em;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    color: var(--lmui-text);
+    font-size: 1.15em;
+    font-weight: 740;
+    line-height: 1.3;
+}
+
+body.lampa-modern-ui .lmui-series-summary__meta,
+body.lampa-modern-ui .lmui-series-summary__next {
+    margin-top: 0.28em;
+    color: var(--lmui-muted);
+    line-height: 1.38;
+}
+
+body.lampa-modern-ui .lmui-series-summary__next strong {
+    color: var(--lmui-text);
+    font-weight: 680;
+}
+
+body.lampa-modern-ui .lmui-series-progress {
+    width: min(24em, 100%);
+    height: 0.34em;
+    overflow: hidden;
+    margin-top: 0.58em;
+    border-radius: 99em;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+body.lampa-modern-ui .lmui-series-progress > i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--lmui-accent);
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-series .full-start-new__buttons .lmui-source-action {
+    display: none !important;
+}
+
+body.lampa-modern-ui .full-start-new__buttons .lmui-series-primary {
+    order: -20;
+    border-color: transparent;
+    background: var(--lmui-accent);
+    color: #07101c;
+    font-weight: 780;
+}
+
+body.lampa-modern-ui .full-start-new__buttons .lmui-series-primary.focus,
+body.lampa-modern-ui .full-start-new__buttons .lmui-series-primary.hover {
+    border-color: #fff;
+    background: var(--lmui-accent-strong);
+    color: #050b13;
+    box-shadow: 0 0 0 0.11em #fff, 0 0 0 0.25em rgba(105, 167, 255, 0.32), 0 0.9em 2.2em rgba(0, 0, 0, 0.35);
+}
+
+body.lampa-modern-ui .full-start-new__buttons .lmui-all-episodes {
+    order: -10;
+}
+
+body.lampa-modern-ui .lmui-episode-remembered::after {
+    content: "Последний выбор";
+    position: absolute;
+    right: 0.55em;
+    bottom: 0.55em;
+    z-index: 4;
+    padding: 0.25em 0.42em;
+    border-radius: 0.45em;
+    background: rgba(5, 8, 14, 0.9);
+    color: var(--lmui-accent-strong);
+    font-size: 0.72em;
+    font-weight: 700;
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-no-backdrop .full-start-new__right {
+    position: relative;
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-no-backdrop .full-start-new__right::before {
+    content: "";
+    position: absolute;
+    inset: -1.2em -1.4em;
+    z-index: -1;
+    border-radius: var(--lmui-radius-lg);
+    background: linear-gradient(135deg, rgba(24, 36, 56, 0.62), rgba(7, 10, 16, 0.18));
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-title-long .full-start-new__title {
+    max-width: 22ch;
+    font-size: clamp(2.05em, 3.5vw, 3.9em);
+    line-height: 1.08;
+}
+
+body.lampa-modern-ui.lmui-layout-tablet .lmui-series-summary {
+    width: 100%;
+    margin-top: 0.75em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .lmui-series-summary {
+    width: 100%;
+    margin-top: 0.75em;
+    padding-left: 0.78em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .lmui-series-summary__title {
+    font-size: 1.05em;
+}
+
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__buttons .lmui-series-primary,
+body.lampa-modern-ui.lmui-layout-phone .full-start-new__buttons .lmui-all-episodes {
+    grid-column: 1 / -1;
 }
 
 /* Search */
@@ -1709,6 +1851,12 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             } : null,
             searchOpen: !!search,
             searchState: lastSearchState,
+            detail: activeDetailCard ? {
+                key: activeDetailKey,
+                mediaType: mediaType(activeDetailCard),
+                generation: detailGeneration,
+                memory: readEpisodeMemory(activeDetailCard)
+            } : null,
             settingsComponentsInDom: settingsIds,
             shots: clone(window.__LMUI_SHOTS_STATE__ || {})
         };
@@ -1724,6 +1872,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             snapshot: diagnosticSnapshot,
             recoverMain: function () { return activeModernMain && typeof activeModernMain.recoverFocus === 'function' ? activeModernMain.recoverFocus('console') : false; },
             recoverSearch: function () { return recoverSearchFocus('console'); },
+            restoreEpisodeFocus: function () { return restoreEpisodeFocus(activeActivityRoot(), activeDetailCard, 'console', true); },
             enforceShotsOff: function () { enforceShotsOff('console'); return clone(window.__LMUI_SHOTS_STATE__ || {}); },
             cleanupSettings: function () { installSettingsGuard(); removeHiddenSettingsComponents(); scheduleSettingsCleanupBurst(); return diagnosticSnapshot().settingsComponentsInDom; },
             dump: function () {
@@ -2851,14 +3000,569 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return data && data.lmui_row_id || '';
     }
 
+    function numberValue(value, fallback) {
+        var parsed = Number(value);
+        return isFinite(parsed) ? parsed : (fallback || 0);
+    }
+
+    function activeActivityRoot() {
+        var active = document.querySelector('.activity--active');
+        if (active) return active;
+        var activity = activeActivity();
+        if (activity && activity.activity && activity.activity.render) {
+            try {
+                var rendered = activity.activity.render(true);
+                if (rendered && rendered.nodeType === 1) return rendered;
+            } catch (error) {}
+        }
+        return null;
+    }
+
+    function detailMemoryStore() {
+        try {
+            var raw = window.sessionStorage && window.sessionStorage.getItem(DETAIL_MEMORY_KEY);
+            var parsed = raw ? JSON.parse(raw) : {};
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    function writeDetailMemory(store) {
+        try {
+            if (window.sessionStorage) window.sessionStorage.setItem(DETAIL_MEMORY_KEY, JSON.stringify(store || {}));
+        } catch (error) {
+            diagnostic('detail.memory.write_error', { message: String(error && error.message || error) }, 'warn');
+        }
+    }
+
+    function detailKey(card) {
+        return card ? contentId(card) : '';
+    }
+
+    function readEpisodeMemory(card) {
+        var key = detailKey(card);
+        if (!key) return null;
+        var value = detailMemoryStore()[key];
+        return value && typeof value === 'object' ? value : null;
+    }
+
+    function episodeCoordinates(episode) {
+        if (!episode || typeof episode !== 'object') return null;
+        var season = episode.season_number !== undefined ? episode.season_number : episode.season;
+        var number = episode.episode_number !== undefined ? episode.episode_number : episode.episode;
+        season = Number(season);
+        number = Number(number);
+        if (!isFinite(season) || !isFinite(number) || season < 0 || number < 1) return null;
+        return { season: season, episode: number };
+    }
+
+    function rememberEpisodeSelection(card, episode, reason) {
+        var coordinates = episodeCoordinates(episode);
+        var key = detailKey(card);
+        if (!key || !coordinates) return false;
+        var store = detailMemoryStore();
+        store[key] = {
+            season: coordinates.season,
+            episode: coordinates.episode,
+            updatedAt: Date.now ? Date.now() : new Date().getTime()
+        };
+        var keys = Object.keys(store);
+        if (keys.length > 80) {
+            keys.sort(function (left, right) {
+                return numberValue(store[left] && store[left].updatedAt, 0) - numberValue(store[right] && store[right].updatedAt, 0);
+            });
+            keys.slice(0, keys.length - 80).forEach(function (oldKey) { delete store[oldKey]; });
+        }
+        writeDetailMemory(store);
+        diagnostic('detail.episode.remember', {
+            key: key,
+            season: coordinates.season,
+            episode: coordinates.episode,
+            reason: reason || ''
+        });
+        return true;
+    }
+
+    function collectEpisodes(value, result, depth) {
+        if (depth > 5 || value === null || value === undefined) return;
+        if (Array.isArray(value)) {
+            value.forEach(function (item) { collectEpisodes(item, result, depth + 1); });
+            return;
+        }
+        if (typeof value !== 'object') return;
+        if (episodeCoordinates(value)) {
+            result.push(value);
+            return;
+        }
+        ['episodes_original', 'episodes', 'results', 'items'].forEach(function (key) {
+            if (value[key] !== undefined) collectEpisodes(value[key], result, depth + 1);
+        });
+    }
+
+    function seriesEpisodesFromData(data) {
+        var collected = [];
+        collectEpisodes(data && data.episodes, collected, 0);
+        var unique = {};
+        return collected.filter(function (episode) {
+            var coordinates = episodeCoordinates(episode);
+            if (!coordinates) return false;
+            var key = coordinates.season + ':' + coordinates.episode;
+            if (unique[key]) return false;
+            unique[key] = true;
+            return true;
+        }).sort(function (left, right) {
+            var a = episodeCoordinates(left);
+            var b = episodeCoordinates(right);
+            return a.season === b.season ? a.episode - b.episode : a.season - b.season;
+        });
+    }
+
+    function episodeAirTimestamp(episode) {
+        if (!episode || !episode.air_date) return 0;
+        var parsed = new Date(String(episode.air_date).replace(/-/g, '/')).getTime();
+        return isFinite(parsed) ? parsed : 0;
+    }
+
+    function episodeIsAvailable(episode) {
+        if (!episode || episode.comeing) return false;
+        var timestamp = episodeAirTimestamp(episode);
+        return !timestamp || timestamp <= (Date.now ? Date.now() : new Date().getTime());
+    }
+
+    function episodeTimeline(card, episode) {
+        var coordinates = episodeCoordinates(episode);
+        var road = { percent: 0, time: 0, duration: 0 };
+        if (!coordinates) return road;
+        try {
+            if (window.Lampa && Lampa.Timeline && typeof Lampa.Timeline.watchedEpisode === 'function') {
+                var current = Lampa.Timeline.watchedEpisode(card, coordinates.season, coordinates.episode, true);
+                if (current && typeof current === 'object') {
+                    road.percent = numberValue(current.percent, 0);
+                    road.time = numberValue(current.time, 0);
+                    road.duration = numberValue(current.duration, 0);
+                    return road;
+                }
+            }
+        } catch (error) {
+            diagnostic('detail.timeline.error', { message: String(error && error.message || error) }, 'warn');
+        }
+        var embedded = episode.timeline || episode.view || null;
+        if (embedded && typeof embedded === 'object') {
+            road.percent = numberValue(embedded.percent, 0);
+            road.time = numberValue(embedded.time, 0);
+            road.duration = numberValue(embedded.duration, 0);
+        }
+        return road;
+    }
+
+    function episodeHint(card) {
+        if (!card) return null;
+        return episodeCoordinates(card.episode && typeof card.episode === 'object' ? card.episode : card);
+    }
+
+    function resolveSeriesPlayback(data) {
+        var card = data && data.movie ? data.movie : activeDetailCard;
+        var episodes = seriesEpisodesFromData(data);
+        var available = episodes.filter(episodeIsAvailable);
+        var upcoming = episodes.filter(function (episode) { return !episodeIsAvailable(episode); });
+        var entries = available.map(function (episode) {
+            return { episode: episode, timeline: episodeTimeline(card, episode) };
+        });
+        var current = null;
+        var hint = episodeHint(card);
+        if (hint) {
+            current = entries.find(function (entry) {
+                var coordinates = episodeCoordinates(entry.episode);
+                return coordinates.season === hint.season && coordinates.episode === hint.episode && entry.timeline.percent < 60;
+            }) || null;
+        }
+        if (!current) {
+            var partial = entries.filter(function (entry) { return entry.timeline.percent > 0 && entry.timeline.percent < 60; });
+            if (partial.length) current = partial[partial.length - 1];
+        }
+        if (!current) {
+            var lastWatchedIndex = -1;
+            entries.forEach(function (entry, index) {
+                if (entry.timeline.percent >= 60) lastWatchedIndex = index;
+            });
+            current = entries.find(function (entry, index) { return index > lastWatchedIndex && entry.timeline.percent < 60; }) || null;
+        }
+        var allWatched = !!entries.length && entries.every(function (entry) { return entry.timeline.percent >= 60; });
+        if (!current && entries.length) current = entries[allWatched ? entries.length - 1 : 0];
+        var currentIndex = current ? entries.indexOf(current) : -1;
+        var next = currentIndex >= 0 ? entries.slice(currentIndex + 1).find(function (entry) { return entry.timeline.percent < 60; }) || null : null;
+        return {
+            card: card,
+            episodes: episodes,
+            available: entries,
+            current: current,
+            next: next,
+            upcoming: upcoming.length ? upcoming[0] : null,
+            allWatched: allWatched,
+            status: !episodes.length ? 'empty' : !entries.length ? 'upcoming' : allWatched ? 'complete' : 'ready'
+        };
+    }
+
+    function padEpisodeNumber(value) {
+        var text = String(value);
+        return text.length < 2 ? '0' + text : text;
+    }
+
+    function formatEpisodeTitle(episode) {
+        var coordinates = episodeCoordinates(episode);
+        if (!coordinates) return '';
+        var label = 'S' + padEpisodeNumber(coordinates.season) + ' E' + padEpisodeNumber(coordinates.episode);
+        var name = episode && episode.name ? String(episode.name) : '';
+        return name ? label + ' · ' + name : label;
+    }
+
+    function formatRemainingTime(timeline) {
+        if (!timeline || !timeline.duration || timeline.duration <= timeline.time) return '';
+        var seconds = Math.max(0, timeline.duration - timeline.time);
+        var minutes = Math.max(1, Math.round(seconds / 60));
+        if (minutes < 60) return 'осталось ' + minutes + ' мин';
+        var hours = Math.floor(minutes / 60);
+        var rest = minutes % 60;
+        return 'осталось ' + hours + ' ч' + (rest ? ' ' + rest + ' мин' : '');
+    }
+
+    function latestPlaybackButton(root) {
+        if (!root || !root.querySelector) return null;
+        return root.querySelector('.full-start-new__buttons .button--priority:not(.hide):not(.lmui-series-primary)') ||
+            root.querySelector('.full-start-new__buttons .button--play:not(.hide):not(.lmui-series-primary)');
+    }
+
+    function bindDetailAction(node, handler) {
+        var lastRunAt = 0;
+        function run(event) {
+            var timestamp = Date.now ? Date.now() : new Date().getTime();
+            if (timestamp - lastRunAt < 260) return;
+            lastRunAt = timestamp;
+            if (event && event.preventDefault) event.preventDefault();
+            if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
+            handler(event);
+        }
+        if (window.$) $(node).on('hover:enter.lmui', run);
+        node.addEventListener('click', run);
+    }
+
+    function makeDetailButton(className, label) {
+        var button = document.createElement('div');
+        button.className = 'full-start__button selector ' + className;
+        button.setAttribute('role', 'button');
+        button.setAttribute('tabindex', '0');
+        button.setAttribute('aria-label', label);
+        var text = document.createElement('span');
+        text.className = 'lmui-detail-action__label';
+        text.textContent = label;
+        button.appendChild(text);
+        return button;
+    }
+
+    function openEpisodesScreen(card) {
+        if (!card) return false;
+        var memory = readEpisodeMemory(card);
+        var payload = {
+            component: 'episodes',
+            title: window.Lampa && Lampa.Lang && typeof Lampa.Lang.translate === 'function' ? Lampa.Lang.translate('title_episodes') : 'Эпизоды',
+            card: card,
+            source: card.source || storageGet('source', 'tmdb'),
+            page: 1
+        };
+        if (memory && memory.season) payload.season = memory.season;
+        try {
+            if (window.Lampa && Lampa.Activity && typeof Lampa.Activity.push === 'function') {
+                Lampa.Activity.push(payload);
+                diagnostic('detail.episodes.open', { key: detailKey(card), season: payload.season || 0, method: 'activity' });
+                return true;
+            }
+            if (window.Lampa && Lampa.Router && typeof Lampa.Router.call === 'function') {
+                Lampa.Router.call('episodes', card);
+                diagnostic('detail.episodes.open', { key: detailKey(card), season: payload.season || 0, method: 'router' });
+                return true;
+            }
+        } catch (error) {
+            diagnostic('detail.episodes.open_error', { message: String(error && error.message || error) }, 'error');
+        }
+        return false;
+    }
+
+    function seriesStateSignature(state, source) {
+        function coordinates(entry) {
+            var value = entry && entry.episode ? episodeCoordinates(entry.episode) : episodeCoordinates(entry);
+            return value ? value.season + ':' + value.episode : '-';
+        }
+        var sourceType = source && source.classList && source.classList.contains('button--priority') ? 'priority' : source ? 'play' : 'none';
+        return [
+            state.status,
+            state.episodes.length,
+            coordinates(state.current),
+            state.current ? Math.round(numberValue(state.current.timeline.percent, 0)) : 0,
+            state.current ? Math.round(numberValue(state.current.timeline.time, 0)) : 0,
+            coordinates(state.next),
+            coordinates(state.upcoming),
+            sourceType
+        ].join('|');
+    }
+
+    function renderSeriesSummary(root, data) {
+        if (!root || !root.querySelector) return null;
+        var card = data && data.movie ? data.movie : activeDetailCard;
+        if (mediaType(card) !== 'tv') return null;
+        var start = root.querySelector('.full-start-new');
+        var buttons = root.querySelector('.full-start-new__buttons');
+        if (!start || !buttons) return null;
+        var right = root.querySelector('.full-start-new__right') || buttons.parentNode;
+        if (!right) return null;
+
+        var state = resolveSeriesPlayback(data || activeDetailData || { movie: card });
+        var source = latestPlaybackButton(root);
+        var signature = seriesStateSignature(state, source);
+        var existingSummary = root.querySelector('.lmui-series-summary');
+        var expectedPrimary = !!(source && state.current && state.status !== 'upcoming' && state.status !== 'empty');
+        var existingPrimary = !!root.querySelector('.lmui-series-primary');
+        if (existingSummary && existingSummary.getAttribute('data-lmui-series-signature') === signature && existingPrimary === expectedPrimary) return state;
+
+        var restoreAction = root.querySelector('.lmui-series-primary.focus') ? 'primary' : root.querySelector('.lmui-all-episodes.focus') ? 'episodes' : '';
+        Array.prototype.slice.call(root.querySelectorAll('.lmui-series-summary, .lmui-series-primary, .lmui-all-episodes')).forEach(function (node) {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+        });
+        Array.prototype.slice.call(root.querySelectorAll('.lmui-source-action')).forEach(function (node) { node.classList.remove('lmui-source-action'); });
+        source = latestPlaybackButton(root);
+
+        var summary = document.createElement('section');
+        summary.setAttribute('data-lmui-series-signature', signature);
+        summary.className = 'lmui-series-summary';
+        summary.setAttribute('aria-label', 'Продолжение сериала');
+        var eyebrow = document.createElement('div');
+        eyebrow.className = 'lmui-series-summary__eyebrow';
+        eyebrow.textContent = state.status === 'complete' ? 'Просмотрено' : state.status === 'upcoming' ? 'Ожидается' : 'Сейчас смотрите';
+        var title = document.createElement('div');
+        title.className = 'lmui-series-summary__title';
+        var meta = document.createElement('div');
+        meta.className = 'lmui-series-summary__meta';
+        var next = document.createElement('div');
+        next.className = 'lmui-series-summary__next';
+
+        if (state.status === 'empty') {
+            title.textContent = 'Эпизоды пока недоступны';
+            meta.textContent = 'Откройте полный список позже или выберите источник просмотра.';
+        } else if (state.status === 'upcoming') {
+            title.textContent = state.upcoming ? formatEpisodeTitle(state.upcoming) : 'Новые серии ещё не вышли';
+            meta.textContent = state.upcoming && state.upcoming.air_date ? 'Дата выхода: ' + state.upcoming.air_date : 'Дата выхода пока не указана.';
+        } else if (state.status === 'complete') {
+            title.textContent = 'Все доступные серии просмотрены';
+            meta.textContent = state.current ? 'Последняя: ' + formatEpisodeTitle(state.current.episode) : '';
+        } else if (state.current) {
+            title.textContent = formatEpisodeTitle(state.current.episode);
+            var progressCopy = [];
+            if (state.current.timeline.percent > 0) progressCopy.push(Math.round(state.current.timeline.percent) + '%');
+            var remaining = formatRemainingTime(state.current.timeline);
+            if (remaining) progressCopy.push(remaining);
+            meta.textContent = progressCopy.length ? progressCopy.join(' · ') : 'Готово к просмотру';
+            if (state.current.timeline.percent > 0) {
+                var progress = document.createElement('div');
+                progress.className = 'lmui-series-progress';
+                var bar = document.createElement('i');
+                bar.style.width = Math.max(0, Math.min(100, state.current.timeline.percent)) + '%';
+                progress.appendChild(bar);
+                summary.appendChild(progress);
+            }
+        }
+
+        if (state.next) {
+            next.textContent = 'Далее: ' + formatEpisodeTitle(state.next.episode);
+        } else if (state.upcoming) {
+            next.textContent = 'Следующая серия: ' + formatEpisodeTitle(state.upcoming) + (state.upcoming.air_date ? ' · ' + state.upcoming.air_date : '');
+        } else if (state.status === 'complete') {
+            next.textContent = 'Новая серия появится здесь после выхода.';
+        }
+
+        summary.insertBefore(eyebrow, summary.firstChild);
+        summary.insertBefore(title, summary.children[1] || null);
+        summary.insertBefore(meta, summary.children[2] || null);
+        if (next.textContent) summary.appendChild(next);
+        var summaryHost = buttons.parentNode || right;
+        summaryHost.insertBefore(summary, buttons);
+
+        if (source && state.current && state.status !== 'upcoming' && state.status !== 'empty') {
+            var coordinates = episodeCoordinates(state.current.episode);
+            var primaryLabel = state.status === 'complete'
+                ? 'Смотреть сериал'
+                : (state.current.timeline.percent > 0 ? 'Продолжить ' : 'Смотреть ') +
+                    'S' + padEpisodeNumber(coordinates.season) + ' E' + padEpisodeNumber(coordinates.episode);
+            var primary = makeDetailButton('lmui-series-primary lmui-primary-action', primaryLabel);
+            primary.setAttribute('data-season', coordinates.season);
+            primary.setAttribute('data-episode', coordinates.episode);
+            source.classList.add('lmui-source-action');
+            bindDetailAction(primary, function () {
+                rememberEpisodeSelection(card, state.current.episode, 'primary');
+                var latest = latestPlaybackButton(root);
+                diagnostic('detail.series.play', {
+                    key: detailKey(card),
+                    season: coordinates.season,
+                    episode: coordinates.episode,
+                    sourceFound: !!latest
+                });
+                if (!latest) return;
+                try {
+                    if (window.$) $(latest).trigger('hover:enter');
+                    else latest.click();
+                } catch (error) {
+                    diagnostic('detail.series.play_error', { message: String(error && error.message || error) }, 'error');
+                }
+            });
+            buttons.insertBefore(primary, buttons.firstChild);
+        }
+
+        var allEpisodes = makeDetailButton('lmui-all-episodes', 'Все эпизоды');
+        bindDetailAction(allEpisodes, function () { openEpisodesScreen(card); });
+        var primaryNode = buttons.querySelector('.lmui-series-primary');
+        if (primaryNode) {
+            if (primaryNode.nextSibling) buttons.insertBefore(allEpisodes, primaryNode.nextSibling);
+            else buttons.appendChild(allEpisodes);
+        } else buttons.insertBefore(allEpisodes, buttons.firstChild);
+
+        if (restoreAction && window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') {
+            var restoreNode = restoreAction === 'primary' ? buttons.querySelector('.lmui-series-primary') : allEpisodes;
+            if (restoreNode) {
+                try { Lampa.Controller.collectionFocus($(restoreNode), $(root), true); }
+                catch (error) { diagnostic('detail.series.focus_restore_error', { message: String(error && error.message || error) }, 'warn'); }
+            }
+        }
+
+        diagnostic('detail.series.render', {
+            key: detailKey(card),
+            status: state.status,
+            episodes: state.episodes.length,
+            available: state.available.length,
+            current: state.current ? episodeCoordinates(state.current.episode) : null,
+            next: state.next ? episodeCoordinates(state.next.episode) : null,
+            sourceFound: !!source
+        });
+        return state;
+    }
+
+    function episodeNodeData(node) {
+        if (!node) return null;
+        var data = cardData(node);
+        if (data) return data;
+        try {
+            if (window.$) {
+                data = $(node).data('json') || $(node).data('item') || $(node).data('card');
+                if (data && typeof data === 'object') return data;
+            }
+        } catch (error) {}
+        return null;
+    }
+
+    function findEpisodeNode(root, memory) {
+        if (!root || !memory || !root.querySelectorAll) return null;
+        var candidates = root.querySelectorAll('.full-episode, .season-episode, .card-episode, .selector');
+        for (var index = 0; index < candidates.length; index += 1) {
+            var data = episodeNodeData(candidates[index]);
+            var coordinates = episodeCoordinates(data);
+            if (coordinates && coordinates.season === Number(memory.season) && coordinates.episode === Number(memory.episode)) return candidates[index];
+        }
+        return null;
+    }
+
+    function restoreEpisodeFocus(root, card, reason, forceFocus) {
+        var memory = readEpisodeMemory(card);
+        if (!root || !memory) return false;
+        var node = findEpisodeNode(root, memory);
+        if (!node) return false;
+        Array.prototype.slice.call(root.querySelectorAll('.lmui-episode-remembered')).forEach(function (item) { item.classList.remove('lmui-episode-remembered'); });
+        node.classList.add('lmui-episode-remembered');
+        var focused = root.querySelector('.selector.focus');
+        var shouldFocus = forceFocus || episodeRestorePending || !focused;
+        if (shouldFocus && window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') {
+            try {
+                Lampa.Controller.collectionFocus($(node), $(root), true);
+                episodeRestorePending = false;
+            }
+            catch (error) { diagnostic('detail.episode.restore_error', { message: String(error && error.message || error) }, 'warn'); }
+        }
+        diagnostic('detail.episode.restore', {
+            key: detailKey(card),
+            season: memory.season,
+            episode: memory.episode,
+            reason: reason || '',
+            focused: shouldFocus
+        });
+        return true;
+    }
+
+    function stopEpisodeFocusObserver() {
+        if (episodeFocusObserver) {
+            try { episodeFocusObserver.disconnect(); } catch (error) {}
+            episodeFocusObserver = null;
+        }
+        clearTimeout(episodeFocusObserverTimer);
+        episodeFocusObserverTimer = 0;
+    }
+
+    function observeEpisodeFocus(root, card, reason) {
+        stopEpisodeFocusObserver();
+        if (!root || !card || !window.MutationObserver) return restoreEpisodeFocus(root, card, reason, false);
+        if (restoreEpisodeFocus(root, card, reason, false)) return true;
+        episodeFocusObserver = new MutationObserver(function () {
+            if (restoreEpisodeFocus(root, card, reason + '-mutation', false)) stopEpisodeFocusObserver();
+        });
+        episodeFocusObserver.observe(root, { childList: true, subtree: true });
+        episodeFocusObserverTimer = setTimeout(function () {
+            diagnostic('detail.episode.restore_timeout', { key: detailKey(card), reason: reason || '' }, 'warn');
+            stopEpisodeFocusObserver();
+        }, 1600);
+        return false;
+    }
+
+    function decorateEpisodeComponent(event) {
+        if (!event || event.name !== 'episodes' || !event.item) return;
+        var root = null;
+        try { root = event.item.render(true); } catch (error) {}
+        if (!root || !root.querySelectorAll) return;
+        var card = event.data && event.data.movie ? event.data.movie : activeDetailCard;
+        var memory = readEpisodeMemory(card);
+        var node = findEpisodeNode(root, memory);
+        if (node) {
+            node.classList.add('lmui-episode-remembered');
+            try { event.item.last = node; } catch (error) {}
+        }
+        diagnostic('detail.episodes.row', { key: detailKey(card), remembered: !!node, count: root.querySelectorAll('.selector').length });
+    }
+
+    function decorateDetailFromFullEvent(event) {
+        if (!event) return;
+        var root = event.body && event.body[0] ? event.body[0] : activeActivityRoot();
+        if (event.type === 'start') {
+            detailGeneration += 1;
+            activeDetailData = event.data || null;
+            activeDetailCard = event.data && event.data.movie ? event.data.movie : event.object && (event.object.card || event.object) || null;
+            activeDetailKey = detailKey(activeDetailCard);
+            diagnostic('detail.start', { key: activeDetailKey, generation: detailGeneration, mediaType: mediaType(activeDetailCard) });
+        }
+        if (event.type === 'complite') {
+            activeDetailData = event.data || activeDetailData;
+            activeDetailCard = event.data && event.data.movie ? event.data.movie : activeDetailCard;
+            activeDetailKey = detailKey(activeDetailCard);
+            decorateDetail(root, activeDetailData, true);
+        }
+        if (event.type === 'build') decorateEpisodeComponent(event);
+    }
+
     function decoratePrimaryAction(root) {
         var scope = root || document;
-        Array.prototype.slice.call(scope.querySelectorAll('.lmui-primary-action')).forEach(function (button) { button.classList.remove('lmui-primary-action'); });
+        Array.prototype.slice.call(scope.querySelectorAll('.lmui-primary-action')).forEach(function (button) {
+            if (!button.classList.contains('lmui-series-primary')) button.classList.remove('lmui-primary-action');
+        });
         var activity = scope.matches && scope.matches('.activity--active') ? scope : scope.querySelector && scope.querySelector('.activity--active');
         var searchScope = activity || scope;
-        var priority = searchScope.querySelector('.full-start-new__buttons .button--priority:not(.hide)');
-        var play = searchScope.querySelector('.full-start-new__buttons .button--play:not(.hide)');
-        var button = priority || play;
+        var custom = searchScope.querySelector('.full-start-new__buttons .lmui-series-primary');
+        var priority = searchScope.querySelector('.full-start-new__buttons .button--priority:not(.hide):not(.lmui-source-action)');
+        var play = searchScope.querySelector('.full-start-new__buttons .button--play:not(.hide):not(.lmui-source-action)');
+        var button = custom || priority || play;
         if (button) button.classList.add('lmui-primary-action');
         return button;
     }
@@ -2875,16 +3579,35 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         }
     }
 
-    function decorateDetail(root) {
+    function decorateDetail(root, data, force) {
         var scope = root || document;
-        var activity = scope.matches && scope.matches('.activity--active') ? scope : scope.querySelector && scope.querySelector('.activity--active');
-        if (!activity || activeComponent() !== 'full') return;
+        var detailContent = scope.matches && scope.matches('.full-start-new') ? scope : scope.querySelector && scope.querySelector('.full-start-new');
+        if (!detailContent) return;
+        var activity = detailContent.closest ? detailContent.closest('.activity') : null;
+        if (!activity) activity = scope.matches && scope.matches('.activity') ? scope : activeActivityRoot();
+        if (!activity) activity = scope;
+        if (!force && activeComponent() !== 'full') return;
         activity.classList.add('lmui-detail-screen');
-        activity.classList.remove('lmui-detail-series');
+        activity.classList.remove('lmui-detail-series', 'lmui-detail-no-backdrop', 'lmui-detail-title-long');
         var active = activeActivity();
-        var card = active && (active.card || active.object && active.object.card || active.object);
-        if (mediaType(card) === 'tv') activity.classList.add('lmui-detail-series');
-        decoratePrimaryAction(activity);
+        var card = data && data.movie ? data.movie : activeDetailCard || active && (active.card || active.object && active.object.card || active.object);
+        if (card) {
+            activeDetailCard = card;
+            activeDetailKey = detailKey(card);
+        }
+        var title = detailContent.querySelector('.full-start-new__title');
+        if (title && String(title.textContent || '').trim().length > 32) activity.classList.add('lmui-detail-title-long');
+        if (!scope.querySelector('.full-start__background, .full-start-new__background')) activity.classList.add('lmui-detail-no-backdrop');
+        if (mediaType(card) === 'tv') {
+            activity.classList.add('lmui-detail-series');
+            renderSeriesSummary(scope, data || activeDetailData || { movie: card });
+        } else {
+            Array.prototype.slice.call(scope.querySelectorAll('.lmui-series-summary, .lmui-series-primary, .lmui-all-episodes')).forEach(function (node) {
+                if (node && node.parentNode) node.parentNode.removeChild(node);
+            });
+            Array.prototype.slice.call(scope.querySelectorAll('.lmui-source-action')).forEach(function (node) { node.classList.remove('lmui-source-action'); });
+        }
+        decoratePrimaryAction(scope);
         tryFocusPrimaryAction(activity);
     }
 
@@ -3312,7 +4035,9 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function markDetailInteraction() {
-        if (activeComponent() !== 'full') return;
+        var component = activeComponent();
+        if (component === 'episodes') episodeRestorePending = false;
+        if (component !== 'full') return;
         detailUserInteracted = true;
         detailNeedsInitialFocus = false;
     }
@@ -3398,6 +4123,12 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 }
             });
             $(document).on('input.lmui change.lmui keyup.lmui', '.search__input, .simple-keyboard-input, .search-box input', decorateSearch);
+            $(document).on('hover:focus.lmui hover:enter.lmui click.lmui', '.full-episode, .season-episode, .card-episode', function (event) {
+                var episode = episodeNodeData(this);
+                var active = activeActivity();
+                var card = activeDetailCard || active && (active.card || active.object && active.object.card || active.object);
+                rememberEpisodeSelection(card, episode, event && event.type || 'interaction');
+            });
         } catch (error) {
             console.warn('[Lampa Modern UI] interaction handlers failed:', error);
         }
@@ -3479,6 +4210,12 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                         if (activeModernMain && typeof activeModernMain.recoverFocus === 'function') activeModernMain.recoverFocus('activity-' + event.type);
                     }
                     if (event.component === 'settings') scheduleSettingsCleanupBurst();
+                    if (event.component === 'episodes') {
+                        episodeRestorePending = true;
+                        var episodeActivity = activeActivity();
+                        var episodeCard = episodeActivity && (episodeActivity.card || episodeActivity.object && episodeActivity.object.card || activeDetailCard);
+                        observeEpisodeFocus(activeActivityRoot(), episodeCard, 'activity-' + event.type);
+                    } else stopEpisodeFocusObserver();
                     enforceShotsOff('activity-' + (event.component || 'unknown'));
                 }, 60);
             }
@@ -3495,14 +4232,21 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 detailNeedsInitialFocus = true;
                 detailUserInteracted = false;
             }
-            if (event.type === 'start' || event.type === 'complite') scheduleDecorate(event.body && event.body[0]);
+            decorateDetailFromFullEvent(event);
+            if (event.type === 'start' || event.type === 'complite' || event.type === 'build') scheduleDecorate(event.body && event.body[0]);
         });
         Lampa.Listener.follow('favorite', function () { scheduleHomeRefresh('favorite'); });
         Lampa.Listener.follow('state:changed', function (event) {
             if (!event || ['favorite', 'timetable', 'timeline'].indexOf(event.target) < 0) return;
             scheduleHomeRefresh('state-' + event.target, 80);
         });
-        Lampa.Listener.follow('timeline', function () { scheduleHomeRefresh('timeline', 120); });
+        Lampa.Listener.follow('timeline', function () {
+            scheduleHomeRefresh('timeline', 120);
+            if (activeComponent() === 'full' && activeDetailData) {
+                var root = activeActivityRoot();
+                if (root) decorateDetail(root, activeDetailData, false);
+            }
+        });
         Lampa.Listener.follow('app', function (event) {
             if (event && event.type === 'ready') {
                 diagnostic('app.ready', diagnosticSnapshot());
@@ -3574,7 +4318,11 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 optimizeSearchSources: optimizeSearchSources,
                 decorateSearch: decorateSearch,
                 diagnosticSnapshot: diagnosticSnapshot,
-                enforceShotsOff: enforceShotsOff
+                enforceShotsOff: enforceShotsOff,
+                seriesEpisodesFromData: seriesEpisodesFromData,
+                resolveSeriesPlayback: resolveSeriesPlayback,
+                episodeCoordinates: episodeCoordinates,
+                formatEpisodeTitle: formatEpisodeTitle
             };
         }
         window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
