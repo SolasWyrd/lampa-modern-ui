@@ -1,26 +1,30 @@
-/* Lampa Modern UI 0.8.0
+/* Lampa Modern UI 0.9.0
  * Единый UI-слой и простая главная на штатных данных Lampa.
  * Собственный профиль, рекомендации, импорт/экспорт и timeline mirror удалены.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.8.0';
+    var VERSION = '0.9.0';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v080_ready__';
-    var CLEANUP_KEY = 'lmui_v080_cleanup';
+    var READY_FLAG = '__lampa_modern_ui_v090_ready__';
+    var CLEANUP_KEY = 'lmui_v090_cleanup';
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
     var startTimer = 0;
     var refreshTimer = 0;
     var decorateTimer = 0;
-    var settingsCleanupTimer = 0;
-    var observer = null;
+    var dataProbeTimer = 0;
+    var activeObserver = null;
+    var observedRoot = null;
     var lastMainRefreshAt = 0;
-    var initialRefreshScheduled = false;
+    var lastHomeSignature = '';
+    var dataProbeAttempts = 0;
     var focusState = null;
     var homeRow = null;
+    var searchTimer = 0;
+    var inputListenersInstalled = false;
 
     var KEYS = {
         enabled: 'lmui_enabled',
@@ -31,22 +35,23 @@
         homeMode: 'lmui_home_mode'
     };
 
-    var HIDDEN_SETTINGS = [
-        'синхронизация',
+    var HIDDEN_COMPONENT_IDS = [
         'sync',
-        'родительский контроль',
-        'parental control',
-        'удаленная конфигурация',
-        'удалённая конфигурация',
-        'remote configuration'
+        'account_sync',
+        'parental_control',
+        'parental',
+        'remote_configuration',
+        'remote_config'
     ];
 
     var HOME_TITLES = {
         continue: 'Продолжить',
         episodes: 'Новые серии',
-        recommendations: 'Для вас',
-        watchlist: 'Мой список'
+        watchlist: 'Мой список',
+        recommendations: 'Для вас'
     };
+
+    var HOME_ORDER = ['continue', 'episodes', 'watchlist', 'recommendations'];
 
     var CSS = String.raw`
 body.lampa-modern-ui {
@@ -232,7 +237,7 @@ body.lampa-modern-ui .items-line {
     margin-bottom: 0.58em;
 }
 
-body.lampa-modern-ui .items-line.lmui-home-hidden {
+body.lampa-modern-ui .items-line.lmui-home-duplicate {
     display: none !important;
 }
 
@@ -354,7 +359,10 @@ body.lampa-modern-ui .time-line > div {
 body.lampa-modern-ui .card.focus,
 body.lampa-modern-ui .card.hover {
     z-index: 8;
-    transform: translateY(-0.13em) scale(1.038);
+}
+
+body.lampa-modern-ui .card.focus {
+    transform: translateY(-0.1em) scale(1.032);
 }
 
 body.lampa-modern-ui .card.focus .card__view,
@@ -382,35 +390,58 @@ body.lampa-modern-ui.lmui-density-compact .items-line {
     margin-bottom: 0.34em;
 }
 
-/* Continue hero: uses the first native card, so D-pad behavior stays native. */
+/* Continue: compact landscape cards, never a full-screen hero. */
 body.lampa-modern-ui .lmui-row-continue {
-    margin-bottom: 1.1em;
+    margin-bottom: 0.9em;
 }
 
 body.lampa-modern-ui .lmui-row-continue .items-line__title {
-    font-size: clamp(1.35em, 1.8vw, 1.9em);
+    font-size: clamp(1.24em, 1.55vw, 1.62em);
 }
 
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card {
-    width: clamp(26em, 42vw, 43em) !important;
+body.lampa-modern-ui .lmui-row-continue .card {
+    width: clamp(16.5em, 23vw, 21.5em) !important;
+    min-width: 16.5em;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card .card__view {
+body.lampa-modern-ui .lmui-row-continue .card__view {
     aspect-ratio: 16 / 9;
     min-height: 0;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card .card__img,
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card .card__filter,
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card .card__textbox {
+body.lampa-modern-ui .lmui-row-continue .card__img,
+body.lampa-modern-ui .lmui-row-continue .card__filter,
+body.lampa-modern-ui .lmui-row-continue .card__textbox {
     width: 100%;
     height: 100%;
     object-fit: cover;
 }
 
-body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card .card__title {
-    font-size: 1.16em;
+body.lampa-modern-ui .lmui-row-continue .card__title {
+    font-size: 1.02em;
+    font-weight: 700;
+}
+
+body.lampa-modern-ui .lmui-row-continue .time-line {
+    height: 0.38em;
+}
+
+body.lampa-modern-ui .lmui-episode-card .card__view {
+    position: relative;
+}
+
+body.lampa-modern-ui .lmui-episode-badge {
+    position: absolute;
+    left: 0.55em;
+    bottom: 0.55em;
+    z-index: 3;
+    padding: 0.3em 0.55em;
+    border-radius: 0.48em;
+    background: rgba(5, 8, 14, 0.92);
+    color: #fff;
+    font-size: 0.82em;
     font-weight: 720;
+    letter-spacing: 0.02em;
 }
 
 /* Controls */
@@ -779,7 +810,97 @@ body.lampa-modern-ui .navigation-bar__item.active {
     background: var(--lmui-accent-soft);
 }
 
-/* TV input */
+
+/* Row states */
+body.lampa-modern-ui .card.lmui-state-card {
+    width: min(34em, 72vw) !important;
+}
+
+body.lampa-modern-ui .card.lmui-state-card .card__view {
+    min-height: 8.5em;
+    aspect-ratio: auto;
+    display: grid;
+    place-items: center;
+    padding: 1.3em;
+    background: linear-gradient(135deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018));
+}
+
+body.lampa-modern-ui .lmui-row-state {
+    width: 100%;
+    text-align: center;
+}
+
+body.lampa-modern-ui .lmui-row-state__title {
+    color: var(--lmui-text);
+    font-weight: 720;
+    font-size: 1.08em;
+}
+
+body.lampa-modern-ui .lmui-row-state__text {
+    margin-top: 0.35em;
+    color: var(--lmui-muted);
+    line-height: 1.45;
+}
+
+body.lampa-modern-ui .lmui-row-state__action {
+    margin-top: 0.7em;
+    color: var(--lmui-accent-strong);
+    font-weight: 680;
+}
+
+/* Search states */
+body.lampa-modern-ui .lmui-search-hint {
+    width: min(100%, 88em);
+    margin: 0.5em auto 1em;
+    padding: 1.1em 1.2em;
+    border: 0.075em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-md);
+    background: rgba(255,255,255,0.035);
+    color: var(--lmui-muted);
+    line-height: 1.5;
+}
+
+body.lampa-modern-ui .lmui-search-hint strong {
+    display: block;
+    margin-bottom: 0.25em;
+    color: var(--lmui-text);
+    font-size: 1.08em;
+}
+
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="active"] .lmui-search-hint,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="results"] .lmui-search-hint {
+    display: none;
+}
+
+/* Detail semantics */
+body.lampa-modern-ui .activity--active.lmui-detail-screen .full-start-new__buttons {
+    align-items: center;
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-screen .button--play,
+body.lampa-modern-ui .activity--active.lmui-detail-screen .button--priority {
+    order: -10;
+}
+
+body.lampa-modern-ui .activity--active.lmui-detail-series .full-episode,
+body.lampa-modern-ui .activity--active.lmui-detail-series .season-episode {
+    min-width: min(31em, 72vw);
+}
+
+/* Input is separate from viewport layout. */
+body.lampa-modern-ui.lmui-input-pointer .card.hover:not(.focus) {
+    transform: translateY(-0.05em) scale(1.012);
+}
+
+body.lampa-modern-ui.lmui-input-remote .card.focus {
+    transform: translateY(-0.16em) scale(1.05);
+}
+
+body.lampa-modern-ui.lmui-input-remote .card.focus .card__view {
+    box-shadow: 0 0 0 0.14em var(--lmui-accent), 0 0 0 0.3em rgba(105, 167, 255, 0.26), 0 1.3em 3.1em rgba(0, 0, 0, 0.5);
+}
+
+/* TV input (legacy class fallback) */
 body.lampa-modern-ui.lmui-device-tv .card.focus {
     transform: translateY(-0.16em) scale(1.052);
 }
@@ -832,8 +953,9 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         max-height: 86vh;
     }
 
-    body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card {
-        width: min(61vw, 36em) !important;
+    body.lampa-modern-ui .lmui-row-continue .card {
+        width: min(39vw, 20em) !important;
+        min-width: 15em;
     }
 }
 
@@ -888,9 +1010,9 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         min-width: 7.7em;
     }
 
-    body.lampa-modern-ui .lmui-row-continue .card.lmui-hero-card {
-        width: min(88vw, 31em) !important;
-        min-width: 0;
+    body.lampa-modern-ui .lmui-row-continue .card {
+        width: min(76vw, 20em) !important;
+        min-width: 14.5em;
     }
 
     body.lampa-modern-ui .card.focus,
@@ -973,11 +1095,6 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     }
 }
 
-@media (hover: hover) and (pointer: fine) {
-    body.lampa-modern-ui .card.hover:not(.focus) {
-        transform: translateY(-0.06em) scale(1.018);
-    }
-}
 
 @media (prefers-reduced-motion: reduce) {
     body.lampa-modern-ui,
@@ -1006,14 +1123,6 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         return fallback;
     }
 
-    function normalizeText(value) {
-        return String(value || '')
-            .replace(/ё/g, 'е')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-    }
-
     function storageGet(name, fallback) {
         try {
             if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.get === 'function') return Lampa.Storage.get(name, fallback);
@@ -1035,16 +1144,6 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         return false;
     }
 
-    function notify(message) {
-        try {
-            if (window.Lampa && Lampa.Noty && typeof Lampa.Noty.show === 'function') {
-                Lampa.Noty.show(message);
-                return;
-            }
-        } catch (error) {}
-        console.info('[Lampa Modern UI] ' + message);
-    }
-
     function mediaType(card) {
         if (!card) return 'movie';
         var type = String(card.media_type || card.mediaType || card.method || '').toLowerCase();
@@ -1053,12 +1152,12 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         return card.name || card.original_name || card.first_air_date || card.number_of_seasons ? 'tv' : 'movie';
     }
 
-    function cardKey(card) {
+    function contentId(card) {
         if (!card) return '';
         var source = String(card.source || 'tmdb');
         var id = card.id !== undefined && card.id !== null ? String(card.id) : '';
         if (id) return mediaType(card) + ':' + source + ':' + id;
-        return mediaType(card) + ':' + normalizeText(card.title || card.name || card.original_title || card.original_name);
+        return mediaType(card) + ':title:' + String(card.title || card.name || card.original_title || card.original_name || '').toLowerCase();
     }
 
     function dedupeCards(items) {
@@ -1067,12 +1166,35 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         asArray(items).forEach(function (item) {
             var card = item && item.card ? item.card : item;
             if (!card) return;
-            var key = cardKey(card);
+            var key = contentId(card);
             if (!key || seen[key]) return;
             seen[key] = true;
             result.push(clone(card));
         });
         return result;
+    }
+
+    function tagCards(items, rowId) {
+        return asArray(items).map(function (item) {
+            var card = clone(item);
+            card.lmui_row_id = rowId;
+            card.lmui_content_id = contentId(card);
+            return card;
+        });
+    }
+
+    function stateCard(rowId, state, title, text) {
+        return {
+            id: 'lmui-state-' + rowId + '-' + state,
+            source: 'lmui',
+            title: title,
+            name: title,
+            lmui_row_id: rowId,
+            lmui_content_id: 'state:' + rowId + ':' + state,
+            lmui_state: state,
+            lmui_state_text: text,
+            poster: './img/img_broken.svg'
+        };
     }
 
     function favoriteGet(type) {
@@ -1091,67 +1213,111 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
                 cards = asArray(Lampa.Favorite.continues('movie')).concat(asArray(Lampa.Favorite.continues('tv')));
             }
         } catch (error) {
-            console.warn('[Lampa Modern UI] Favorite.continues failed:', error);
+            return { status: 'error', results: [], error: error };
         }
-        cards = dedupeCards(cards).slice(0, 16);
-        if (cards[0] && cards[0].backdrop_path) cards[0].poster_path = cards[0].backdrop_path;
-        if (cards[0] && cards[0].background_image) cards[0].img = cards[0].background_image;
-        return cards;
+        cards = dedupeCards(cards).slice(0, 12);
+        return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'continue') };
     }
 
     function episodeCards() {
-        var items = [];
         try {
-            if (window.Lampa && Lampa.TimeTable && typeof Lampa.TimeTable.recently === 'function') items = asArray(Lampa.TimeTable.recently());
+            var items = window.Lampa && Lampa.TimeTable && typeof Lampa.TimeTable.recently === 'function' ? asArray(Lampa.TimeTable.recently()) : [];
+            var seen = {};
+            var cards = [];
+            items.forEach(function (item) {
+                var sourceCard = item && item.card ? item.card : item;
+                if (!sourceCard) return;
+                var card = clone(sourceCard);
+                var key = contentId(card);
+                if (!key || seen[key]) return;
+                seen[key] = true;
+                var episode = item && item.episode || {};
+                if (episode.season_number !== undefined && episode.episode_number !== undefined) {
+                    card.lmui_episode_label = 'S' + episode.season_number + ' · E' + episode.episode_number;
+                    if (episode.name) card.lmui_episode_name = String(episode.name);
+                }
+                cards.push(card);
+            });
+            cards = cards.slice(0, 18);
+            return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'episodes') };
         } catch (error) {
-            console.warn('[Lampa Modern UI] TimeTable.recently failed:', error);
+            return { status: 'error', results: [], error: error };
         }
-        return dedupeCards(items).slice(0, 18);
     }
 
     function recommendationCards() {
-        var cards = [];
         try {
-            if (window.Lampa && Lampa.Recomends && typeof Lampa.Recomends.get === 'function') {
-                cards = asArray(Lampa.Recomends.get('movie')).concat(asArray(Lampa.Recomends.get('tv')));
+            if (!window.Lampa || !Lampa.Recomends || typeof Lampa.Recomends.get !== 'function') {
+                return { status: 'loading', results: [] };
             }
+            var cards = dedupeCards(asArray(Lampa.Recomends.get('movie')).concat(asArray(Lampa.Recomends.get('tv')))).slice(0, 20);
+            return { status: cards.length ? 'ready' : 'loading', results: tagCards(cards, 'recommendations') };
         } catch (error) {
-            console.warn('[Lampa Modern UI] Recomends.get failed:', error);
+            return { status: 'error', results: [], error: error };
         }
-        return dedupeCards(cards).slice(0, 20);
     }
 
     function watchlistCards() {
-        return dedupeCards(favoriteGet('book')).slice(0, 18);
+        try {
+            var cards = dedupeCards(favoriteGet('book')).slice(0, 18);
+            return { status: cards.length ? 'ready' : 'empty', results: tagCards(cards, 'watchlist') };
+        } catch (error) {
+            return { status: 'error', results: [], error: error };
+        }
     }
 
-    function rowCallback(title, results) {
+    function readHomeData() {
+        return {
+            continue: continueCards(),
+            episodes: episodeCards(),
+            watchlist: watchlistCards(),
+            recommendations: recommendationCards()
+        };
+    }
+
+    function visibleRowsForMode(mode) {
+        return mode === 'minimal' ? ['continue', 'recommendations'] : HOME_ORDER.slice();
+    }
+
+    function rowPayload(rowId, state) {
+        if (state.status === 'ready') return state.results;
+        if (state.status === 'loading' && rowId === 'recommendations') {
+            return [stateCard(rowId, 'loading', 'Подбираем рекомендации', 'Строка появится автоматически, когда Lampa завершит расчёт.')];
+        }
+        if (state.status === 'error') {
+            return [stateCard(rowId, 'error', 'Не удалось загрузить раздел', 'Нажмите, чтобы повторить.')];
+        }
+        return [];
+    }
+
+    function rowCallback(rowId, results) {
         return function (call) {
-            call({ title: title, results: results });
+            call({ title: HOME_TITLES[rowId], results: results });
         };
     }
 
     function homeCallbacks() {
         var mode = String(storageGet(KEYS.homeMode, 'focused') || 'focused');
         if (mode !== 'focused' && mode !== 'minimal') mode = 'focused';
-
-        var rows = [
-            { id: 'continue', title: HOME_TITLES.continue, results: continueCards() },
-            { id: 'episodes', title: HOME_TITLES.episodes, results: episodeCards() },
-            { id: 'recommendations', title: HOME_TITLES.recommendations, results: recommendationCards() },
-            { id: 'watchlist', title: HOME_TITLES.watchlist, results: watchlistCards() }
-        ];
-
-        if (mode === 'minimal') rows = rows.filter(function (row) { return row.id === 'continue' || row.id === 'recommendations'; });
-
-        return rows.filter(function (row) { return row.results.length > 0; }).map(function (row) {
-            return rowCallback(row.title, row.results);
+        var data = readHomeData();
+        return visibleRowsForMode(mode).map(function (rowId) {
+            return { id: rowId, results: rowPayload(rowId, data[rowId]) };
+        }).filter(function (row) {
+            return row.results.length > 0;
+        }).map(function (row) {
+            return rowCallback(row.id, row.results);
         });
+    }
+
+    function homeSignature() {
+        var data = readHomeData();
+        return HOME_ORDER.map(function (id) {
+            return id + ':' + data[id].status + ':' + data[id].results.length;
+        }).join('|');
     }
 
     function registerHomeRow() {
         if (homeRow || !window.Lampa || !Lampa.ContentRows || typeof Lampa.ContentRows.add !== 'function') return false;
-
         homeRow = {
             name: 'lmui_home',
             title: 'Главная Modern UI',
@@ -1164,59 +1330,98 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
                 return callbacks.length ? callbacks : undefined;
             }
         };
-
         Lampa.ContentRows.add(homeRow);
         storageSet('content_rows_lmui_home', boolValue(storageGet(KEYS.homeEnabled, true), true));
         return true;
     }
 
-    function activeComponent() {
+    function activeActivity() {
         try {
             var active = Lampa.Activity && typeof Lampa.Activity.active === 'function' ? Lampa.Activity.active() : null;
-            return active && active.component || '';
+            return active || null;
         } catch (error) {
-            return '';
+            return null;
         }
+    }
+
+    function activeComponent() {
+        var active = activeActivity();
+        return active && active.component || '';
     }
 
     function scheduleHomeRefresh(reason, delay) {
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(function () {
             try {
-                if (!window.Lampa || !Lampa.Activity || typeof Lampa.Activity.active !== 'function') return;
-                var active = Lampa.Activity.active();
-                if (!active || active.component !== 'main' || typeof Lampa.Activity.refresh !== 'function') return;
+                var active = activeActivity();
+                if (!active || active.component !== 'main' || !Lampa.Activity || typeof Lampa.Activity.refresh !== 'function') return;
                 var timestamp = Date.now ? Date.now() : new Date().getTime();
-                if (timestamp - lastMainRefreshAt < 900) return;
+                if (timestamp - lastMainRefreshAt < 700) return;
                 lastMainRefreshAt = timestamp;
                 Lampa.Activity.refresh(false);
             } catch (error) {
                 console.warn('[Lampa Modern UI] home refresh failed:', reason || 'update', error);
             }
-        }, typeof delay === 'number' ? delay : 280);
+        }, typeof delay === 'number' ? delay : 180);
     }
 
-    function detectDeviceMode() {
-        var width = Math.max(window.innerWidth || 0, document.documentElement && document.documentElement.clientWidth || 0);
-        var height = Math.max(window.innerHeight || 0, document.documentElement && document.documentElement.clientHeight || 0);
+    function probeHomeData() {
+        clearTimeout(dataProbeTimer);
+        var signature = homeSignature();
+        if (lastHomeSignature && signature !== lastHomeSignature) scheduleHomeRefresh('home-data-ready', 50);
+        lastHomeSignature = signature;
+        dataProbeAttempts += 1;
+        if (dataProbeAttempts < 12 && signature.indexOf('recommendations:loading') >= 0) {
+            dataProbeTimer = setTimeout(probeHomeData, Math.min(1600, 250 + dataProbeAttempts * 120));
+        }
+    }
+
+    function layoutViewport() {
+        var content = document.querySelector('.wrap__content');
+        var width = content && (content.clientWidth || content.getBoundingClientRect && content.getBoundingClientRect().width) || 0;
+        var height = content && (content.clientHeight || content.getBoundingClientRect && content.getBoundingClientRect().height) || 0;
+        return {
+            width: Math.max(width || 0, width ? 0 : (window.innerWidth || 0), width ? 0 : (document.documentElement && document.documentElement.clientWidth || 0)),
+            height: Math.max(height || 0, height ? 0 : (window.innerHeight || 0), height ? 0 : (document.documentElement && document.documentElement.clientHeight || 0))
+        };
+    }
+
+    function detectLayoutMode() {
+        var viewport = layoutViewport();
+        var shortest = Math.min(viewport.width, viewport.height);
+        if (shortest <= 600) return 'phone';
+        if (viewport.width <= 1100 || shortest <= 900) return 'tablet';
+        return 'desktop';
+    }
+
+    function detectInputMode() {
+        var body = document.body;
         var touch = Number(window.navigator && window.navigator.maxTouchPoints || 0);
         var coarse = false;
-        var noHover = false;
-
+        var hover = false;
+        var fine = false;
         try {
             coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-            noHover = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+            hover = !!(window.matchMedia && window.matchMedia('(hover: hover)').matches);
+            fine = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
         } catch (error) {}
 
-        if ((touch > 0 || coarse) && Math.min(width, height) <= 600) return 'phone';
-        if ((touch > 0 || coarse) && Math.min(width, height) <= 1000) return 'tablet';
-        if (noHover && coarse && width >= 900) return 'tv';
-        return 'desktop';
+        /* Lampa может считать desktop-браузер TV. Явный текущий способ ввода
+         * важнее платформенной эвристики: mouse--controll означает pointer. */
+        if (body && (body.classList.contains('mouse--controll') || body.classList.contains('mouse--control'))) return 'pointer';
+        if (body && (body.classList.contains('touch--controll') || body.classList.contains('touch--control'))) return 'touch';
+        if (!touch && hover && fine) return 'pointer';
+        if (touch > 0 || coarse) return 'touch';
+        if (body && (body.classList.contains('platform--tv') || body.classList.contains('tv'))) return 'remote';
+        try {
+            if (window.Lampa && Lampa.Platform && typeof Lampa.Platform.screen === 'function' && Lampa.Platform.screen('tv')) return 'remote';
+        } catch (error) {}
+        return hover ? 'pointer' : 'remote';
     }
 
     function removeThemeClasses(body) {
         Array.prototype.slice.call(body.classList).forEach(function (name) {
-            if (name === 'lampa-modern-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0) body.classList.remove(name);
+            if (name === 'lampa-modern-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0 || name.indexOf('lmui-layout-') === 0 || name.indexOf('lmui-input-') === 0) body.classList.remove(name);
         });
     }
 
@@ -1225,22 +1430,15 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         if (!body) return;
         removeThemeClasses(body);
         if (!boolValue(storageGet(KEYS.enabled, true), true)) return;
-
         var density = String(storageGet(KEYS.density, 'comfortable') || 'comfortable');
         var motion = String(storageGet(KEYS.motion, 'calm') || 'calm');
         var performance = String(storageGet(KEYS.performance, 'standard') || 'standard');
-
         if (density !== 'comfortable' && density !== 'compact') density = 'comfortable';
         if (motion !== 'calm' && motion !== 'minimal') motion = 'calm';
         if (performance !== 'standard' && performance !== 'lite') performance = 'standard';
-
-        body.classList.add(
-            'lampa-modern-ui',
-            'lmui-density-' + density,
-            'lmui-motion-' + motion,
-            'lmui-performance-' + performance,
-            'lmui-device-' + detectDeviceMode()
-        );
+        var layout = detectLayoutMode();
+        var input = detectInputMode();
+        body.classList.add('lampa-modern-ui', 'lmui-density-' + density, 'lmui-motion-' + motion, 'lmui-performance-' + performance, 'lmui-layout-' + layout, 'lmui-input-' + input, 'lmui-device-' + (input === 'remote' ? 'tv' : layout));
     }
 
     function injectStyle() {
@@ -1248,7 +1446,6 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         if (old && old.parentNode) old.parentNode.removeChild(old);
         var legacy = document.getElementById('lampa-personal-style');
         if (legacy && legacy.parentNode) legacy.parentNode.removeChild(legacy);
-
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.type = 'text/css';
@@ -1256,121 +1453,214 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
         document.head.appendChild(style);
     }
 
-    function settingShouldBeHidden(text) {
-        var normalized = normalizeText(text);
-        return HIDDEN_SETTINGS.indexOf(normalized) >= 0;
+    function removeHiddenSettingsComponents() {
+        if (!Lampa.SettingsApi || typeof Lampa.SettingsApi.removeComponent !== 'function') return;
+        HIDDEN_COMPONENT_IDS.forEach(function (id) {
+            try { Lampa.SettingsApi.removeComponent(id); }
+            catch (error) { console.warn('[Lampa Modern UI] settings component removal failed:', id, error); }
+        });
     }
 
-    function cleanupSettingsDom() {
-        settingsCleanupTimer = 0;
+    function cardData(card) {
+        return card && card.card_data && typeof card.card_data === 'object' ? card.card_data : null;
+    }
+
+    function rowIdFromLine(line) {
+        var card = line && line.querySelector ? line.querySelector('.card') : null;
+        var data = cardData(card);
+        return data && data.lmui_row_id || '';
+    }
+
+    function decorateStateCard(card) {
+        var data = cardData(card);
+        if (!data || !data.lmui_state) return;
+        card.classList.add('lmui-state-card');
+        var view = card.querySelector('.card__view');
+        if (!view || view.querySelector('.lmui-row-state')) return;
+        view.innerHTML = '';
+        var state = document.createElement('div');
+        state.className = 'lmui-row-state';
+        state.innerHTML = '<div class="lmui-row-state__title"></div><div class="lmui-row-state__text"></div>' + (data.lmui_state === 'error' ? '<div class="lmui-row-state__action">Повторить</div>' : '');
+        state.querySelector('.lmui-row-state__title').textContent = data.title || '';
+        state.querySelector('.lmui-row-state__text').textContent = data.lmui_state_text || '';
+        view.appendChild(state);
+        var title = card.querySelector('.card__title');
+        var age = card.querySelector('.card__age');
+        if (title) title.remove();
+        if (age) age.remove();
+    }
+
+    function backdropUrl(data) {
+        if (!data || !data.backdrop_path) return '';
         try {
-            Array.prototype.slice.call(document.querySelectorAll('.settings-folder')).forEach(function (folder) {
-                var label = folder.querySelector('.settings-folder__name, .settings-folder__title, .settings-folder__text');
-                var text = normalizeText(label ? label.textContent : folder.textContent);
-                var hidden = HIDDEN_SETTINGS.some(function (target) {
-                    target = normalizeText(target);
-                    return text === target || text.indexOf(target + ' ') === 0;
-                });
-                if (hidden) folder.remove();
+            if (window.Lampa && Lampa.Api && typeof Lampa.Api.img === 'function') return Lampa.Api.img(data.backdrop_path, 'w500');
+        } catch (error) {}
+        return String(data.backdrop_path || '');
+    }
+
+    function decorateContinueCard(card) {
+        var data = cardData(card);
+        if (!data || data.lmui_row_id !== 'continue') return;
+        card.classList.add('lmui-continue-card');
+        var image = card.querySelector('.card__img');
+        var backdrop = backdropUrl(data);
+        if (image && backdrop && image.getAttribute('data-lmui-backdrop') !== backdrop) {
+            image.setAttribute('data-lmui-backdrop', backdrop);
+            image.src = backdrop;
+        }
+    }
+
+    function decorateEpisodeCard(card) {
+        var data = cardData(card);
+        if (!data || data.lmui_row_id !== 'episodes' || !data.lmui_episode_label) return;
+        card.classList.add('lmui-episode-card');
+        var view = card.querySelector('.card__view');
+        if (!view || view.querySelector('.lmui-episode-badge')) return;
+        var badge = document.createElement('div');
+        badge.className = 'lmui-episode-badge';
+        badge.textContent = data.lmui_episode_label;
+        view.appendChild(badge);
+    }
+
+    function overlapRatio(a, b) {
+        if (!a.length || !b.length) return 0;
+        var lookup = {};
+        a.forEach(function (id) { lookup[id] = true; });
+        var matches = b.filter(function (id) { return lookup[id]; }).length;
+        return matches / Math.min(a.length, b.length);
+    }
+
+    function decorateHomeRows(root) {
+        if (activeComponent() !== 'main') return;
+        var customEnabled = boolValue(storageGet(KEYS.enabled, true), true) && boolValue(storageGet(KEYS.homeEnabled, true), true);
+        var lines = Array.prototype.slice.call((root || document).querySelectorAll('.items-line'));
+        var customSets = {};
+        lines.forEach(function (line) {
+            line.classList.remove('lmui-row-continue', 'lmui-row-episodes', 'lmui-row-recommendations', 'lmui-row-watchlist', 'lmui-home-row', 'lmui-home-duplicate', 'lmui-home-hidden');
+            var rowId = rowIdFromLine(line);
+            if (!rowId) return;
+            line.dataset.lmuiRow = rowId;
+            line.classList.add('lmui-home-row', 'lmui-row-' + rowId);
+            var ids = [];
+            Array.prototype.slice.call(line.querySelectorAll('.card')).forEach(function (card) {
+                card.classList.remove('lmui-hero-card');
+                decorateStateCard(card);
+                if (rowId === 'continue') decorateContinueCard(card);
+                if (rowId === 'episodes') decorateEpisodeCard(card);
+                var data = cardData(card);
+                if (data && data.lmui_content_id && !data.lmui_state) ids.push(data.lmui_content_id);
             });
-        } catch (error) {
-            console.warn('[Lampa Modern UI] settings cleanup failed:', error);
-        }
-    }
-
-    function scheduleSettingsCleanup() {
-        if (settingsCleanupTimer) return;
-        settingsCleanupTimer = setTimeout(cleanupSettingsDom, 0);
-    }
-
-    function removeLegacySettingsComponents() {
-        try {
-            if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') {
-                Lampa.SettingsApi.removeComponent('lampa_personal');
-            }
-        } catch (error) {
-            console.warn('[Lampa Modern UI] legacy settings cleanup failed:', error);
-        }
-        scheduleSettingsCleanup();
-    }
-
-    function buttonMeaning(button) {
-        var text = normalizeText(button && button.textContent);
-        var className = String(button && button.className || '').toLowerCase();
-        if (/play|watch|online|continue|start/.test(className)) return 3;
-        if (/продолжить|смотреть|watch|continue|play|запустить|онлайн/.test(text)) return 2;
-        return 0;
-    }
-
-    function decoratePrimaryAction() {
-        var buttons = Array.prototype.slice.call(document.querySelectorAll('.activity--active .full-start-new__buttons .full-start__button'));
-        if (!buttons.length) return;
-        buttons.forEach(function (button) { button.classList.remove('lmui-primary-action'); });
-        buttons.sort(function (a, b) { return buttonMeaning(b) - buttonMeaning(a); });
-        if (buttonMeaning(buttons[0]) > 0) buttons[0].classList.add('lmui-primary-action');
-    }
-
-    function decorateRows() {
-        var main = activeComponent() === 'main';
-        var customHome = main && boolValue(storageGet(KEYS.enabled, true), true) && boolValue(storageGet(KEYS.homeEnabled, true), true);
-        var shown = {};
-
-        Array.prototype.slice.call(document.querySelectorAll('.activity--active .items-line')).forEach(function (line) {
-            var titleElement = line.querySelector('.items-line__title');
-            var title = normalizeText(titleElement && titleElement.textContent);
-            var kind = '';
-
-            line.classList.remove('lmui-row-continue', 'lmui-row-episodes', 'lmui-row-recommendations', 'lmui-row-watchlist', 'lmui-home-row', 'lmui-home-hidden');
-            Array.prototype.slice.call(line.querySelectorAll('.lmui-hero-card')).forEach(function (card) { card.classList.remove('lmui-hero-card'); });
-
-            if (title === normalizeText(HOME_TITLES.continue)) kind = 'continue';
-            else if (title === normalizeText(HOME_TITLES.episodes)) kind = 'episodes';
-            else if (title === normalizeText(HOME_TITLES.recommendations)) kind = 'recommendations';
-            else if (title === normalizeText(HOME_TITLES.watchlist)) kind = 'watchlist';
-
-            if (kind && !shown[kind]) {
-                shown[kind] = true;
-                line.classList.add('lmui-home-row', 'lmui-row-' + kind);
-                if (kind === 'continue') {
-                    var firstCard = line.querySelector('.card');
-                    if (firstCard) firstCard.classList.add('lmui-hero-card');
-                }
-            } else if (customHome) {
-                line.classList.add('lmui-home-hidden');
-            }
+            customSets[rowId] = ids;
+        });
+        if (!customEnabled) return;
+        lines.forEach(function (line) {
+            if (rowIdFromLine(line)) return;
+            var ids = Array.prototype.slice.call(line.querySelectorAll('.card')).map(function (card) {
+                return contentId(cardData(card));
+            }).filter(Boolean).slice(0, 8);
+            if (ids.length < 3) return;
+            var duplicate = Object.keys(customSets).some(function (rowId) {
+                return customSets[rowId].length >= 3 && overlapRatio(customSets[rowId].slice(0, 8), ids) >= 0.6;
+            });
+            if (duplicate) line.classList.add('lmui-home-duplicate');
         });
     }
 
-    function decorateUi() {
-        decorateTimer = 0;
-        cleanupSettingsDom();
-        decorateRows();
-        decoratePrimaryAction();
+    function decoratePrimaryAction(root) {
+        var scope = root || document;
+        Array.prototype.slice.call(scope.querySelectorAll('.lmui-primary-action')).forEach(function (button) { button.classList.remove('lmui-primary-action'); });
+        var activity = scope.matches && scope.matches('.activity--active') ? scope : scope.querySelector && scope.querySelector('.activity--active');
+        var searchScope = activity || scope;
+        var priority = searchScope.querySelector('.full-start-new__buttons .button--priority:not(.hide)');
+        var play = searchScope.querySelector('.full-start-new__buttons .button--play:not(.hide)');
+        var button = priority || play;
+        if (button) button.classList.add('lmui-primary-action');
     }
 
-    function scheduleDecorate() {
+    function decorateDetail(root) {
+        var scope = root || document;
+        var activity = scope.matches && scope.matches('.activity--active') ? scope : scope.querySelector && scope.querySelector('.activity--active');
+        if (!activity || activeComponent() !== 'full') return;
+        activity.classList.add('lmui-detail-screen');
+        activity.classList.remove('lmui-detail-series');
+        var active = activeActivity();
+        var card = active && (active.card || active.object && active.object.card || active.object);
+        if (mediaType(card) === 'tv') activity.classList.add('lmui-detail-series');
+        decoratePrimaryAction(activity);
+    }
+
+    function searchRoot() {
+        return document.querySelector('.activity--active .search, .activity--active .search-box') || document.querySelector('.search--open .search, .search--open .search-box');
+    }
+
+    function decorateSearch() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+            var root = searchRoot();
+            if (!root) return;
+            var screen = root.closest('.activity--active') || root.parentElement;
+            if (!screen) return;
+            screen.classList.add('lmui-search-screen');
+            var input = root.querySelector('input, .search__input, .simple-keyboard-input');
+            var query = String(input && (input.value !== undefined ? input.value : input.textContent) || '').trim();
+            var results = screen.querySelectorAll('.card, .search-item, .explorer-card').length;
+            var loading = !!screen.querySelector('.search-looking, .content-loading, .loading-layer');
+            var state = query ? (loading ? 'active' : results ? 'results' : 'empty') : 'landing';
+            screen.setAttribute('data-lmui-search-state', state);
+            var hint = screen.querySelector('.lmui-search-hint');
+            if (!hint) {
+                hint = document.createElement('div');
+                hint.className = 'lmui-search-hint';
+                root.insertAdjacentElement('afterend', hint);
+            }
+            if (state === 'empty') hint.innerHTML = '<strong>Ничего не найдено</strong>Проверьте название или переключите источник.';
+            else hint.innerHTML = '<strong>Поиск фильмов и сериалов</strong>Введите название. Недавние запросы и источники останутся рядом с полем.';
+        }, 120);
+    }
+
+    function decorateNode(root) {
+        if (!root || root.nodeType !== 1) return;
+        if (activeComponent() === 'main') decorateHomeRows(root.closest && root.closest('.activity--active') || root);
+        if (activeComponent() === 'full') decorateDetail(root.closest && root.closest('.activity--active') || root);
+        if (activeComponent() === 'search' || root.closest && root.closest('.search, .search-box')) decorateSearch();
+    }
+
+    function scheduleDecorate(root) {
         if (decorateTimer) return;
-        decorateTimer = setTimeout(decorateUi, 0);
+        decorateTimer = setTimeout(function () {
+            decorateTimer = 0;
+            var activity = document.querySelector('.activity--active');
+            decorateNode(root || activity || document.body);
+        }, 0);
     }
 
-    function installObserver() {
-        if (observer || !window.MutationObserver || !document.body) return;
-        observer = new MutationObserver(function () {
-            scheduleDecorate();
+    function observeActiveActivity() {
+        var root = document.querySelector('.activity--active');
+        if (!root || root === observedRoot || !window.MutationObserver) return;
+        if (activeObserver) activeObserver.disconnect();
+        observedRoot = root;
+        activeObserver = new MutationObserver(function (records) {
+            records.forEach(function (record) {
+                Array.prototype.slice.call(record.addedNodes || []).forEach(function (node) {
+                    if (node && node.nodeType === 1) scheduleDecorate(node);
+                });
+            });
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        activeObserver.observe(root, { childList: true, subtree: true });
+        scheduleDecorate(root);
     }
 
     function focusedCardState(card) {
         var line = card && card.closest ? card.closest('.items-line') : null;
-        if (!line) return null;
-        var titleElement = line.querySelector('.items-line__title');
+        var data = cardData(card);
+        if (!line || !data) return null;
         var cards = Array.prototype.slice.call(line.querySelectorAll('.card'));
-        var scroll = card.parentElement;
+        var scrollBody = card.parentElement;
         return {
-            title: normalizeText(titleElement && titleElement.textContent),
-            index: Math.max(0, cards.indexOf(card)),
-            scrollLeft: scroll && typeof scroll.scrollLeft === 'number' ? scroll.scrollLeft : 0
+            rowId: data.lmui_row_id || rowIdFromLine(line),
+            contentId: data.lmui_content_id || contentId(data),
+            fallbackIndex: Math.max(0, cards.indexOf(card)),
+            scrollLeft: scrollBody && typeof scrollBody.scrollLeft === 'number' ? scrollBody.scrollLeft : 0
         };
     }
 
@@ -1383,83 +1673,82 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     function restoreFocus() {
         if (!focusState || activeComponent() !== 'main') return;
         var lines = Array.prototype.slice.call(document.querySelectorAll('.activity--active .items-line'));
-        var line = lines.filter(function (candidate) {
-            var title = candidate.querySelector('.items-line__title');
-            return normalizeText(title && title.textContent) === focusState.title;
-        })[0];
+        var line = lines.filter(function (candidate) { return rowIdFromLine(candidate) === focusState.rowId; })[0];
         if (!line) return;
-
         var cards = Array.prototype.slice.call(line.querySelectorAll('.card'));
-        var card = cards[Math.min(focusState.index, Math.max(0, cards.length - 1))];
+        var card = cards.filter(function (candidate) {
+            var data = cardData(candidate);
+            return data && (data.lmui_content_id || contentId(data)) === focusState.contentId;
+        })[0] || cards[Math.min(focusState.fallbackIndex || 0, Math.max(0, cards.length - 1))];
         if (!card) return;
         if (card.parentElement && typeof card.parentElement.scrollLeft === 'number') card.parentElement.scrollLeft = focusState.scrollLeft || 0;
-
         try {
-            if (window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') {
-                Lampa.Controller.collectionFocus($(card), $(line));
-            } else if (window.$) {
-                $(card).trigger('hover:focus');
-            }
+            if (window.$ && Lampa.Controller && typeof Lampa.Controller.collectionFocus === 'function') Lampa.Controller.collectionFocus($(card), $(line), true);
+            else if (window.$) $(card).trigger('hover:focus');
         } catch (error) {
             console.warn('[Lampa Modern UI] focus restore failed:', error);
         }
     }
 
-    function installFocusTracking() {
+    function focusPrimaryAction() {
+        var button = document.querySelector('.activity--active .full-start-new__buttons .lmui-primary-action');
+        var activity = document.querySelector('.activity--active');
+        if (!button || !activity || !window.$ || !Lampa.Controller || typeof Lampa.Controller.collectionFocus !== 'function') return;
+        try { Lampa.Controller.collectionFocus($(button), $(activity), true); }
+        catch (error) { console.warn('[Lampa Modern UI] primary focus failed:', error); }
+    }
+
+    function setInputModeClass(mode) {
+        var body = document.body;
+        if (!body || ['pointer', 'touch', 'remote'].indexOf(mode) < 0) return;
+        ['lmui-input-pointer', 'lmui-input-touch', 'lmui-input-remote'].forEach(function (name) { body.classList.remove(name); });
+        body.classList.add('lmui-input-' + mode);
+        ['lmui-device-tv', 'lmui-device-desktop', 'lmui-device-tablet', 'lmui-device-phone'].forEach(function (name) { body.classList.remove(name); });
+        body.classList.add('lmui-device-' + (mode === 'remote' ? 'tv' : detectLayoutMode()));
+    }
+
+    function installInputModeListeners() {
+        if (inputListenersInstalled) return;
+        inputListenersInstalled = true;
+        window.addEventListener('pointerdown', function (event) {
+            setInputModeClass(event && event.pointerType === 'touch' ? 'touch' : 'pointer');
+        }, { passive: true });
+        window.addEventListener('mousemove', function () { setInputModeClass('pointer'); }, { passive: true });
+        window.addEventListener('touchstart', function () { setInputModeClass('touch'); }, { passive: true });
+        window.addEventListener('keydown', function (event) {
+            var key = event && event.key || '';
+            if (key.indexOf('Arrow') === 0 || key === 'Enter' || key === 'Escape') setInputModeClass('remote');
+        }, { passive: true });
+    }
+
+    function installInteractionHandlers() {
         if (!window.$) return;
         try {
-            $(document).off('hover:focus.lmui', '.activity--active .card');
-            $(document).on('hover:focus.lmui', '.activity--active .card', function () {
-                rememberFocus(this);
+            $(document).off('.lmui');
+            $(document).on('hover:focus.lmui', '.activity--active .card', function () { rememberFocus(this); });
+            $(document).on('hover:enter.lmui', '.activity--active .lmui-state-card', function (event) {
+                var data = cardData(this);
+                if (!data || data.lmui_state !== 'error') return;
+                if (event && event.stopImmediatePropagation) event.stopImmediatePropagation();
+                dataProbeAttempts = 0;
+                probeHomeData();
+                scheduleHomeRefresh('state-retry', 50);
             });
+            $(document).on('input.lmui change.lmui keyup.lmui', '.search__input, .simple-keyboard-input, .search-box input', decorateSearch);
         } catch (error) {
-            console.warn('[Lampa Modern UI] focus tracking failed:', error);
+            console.warn('[Lampa Modern UI] interaction handlers failed:', error);
         }
     }
 
     function addSettings() {
         var icon = '<svg viewBox="0 0 32 32" width="32" height="32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="5" width="24" height="22" rx="7" stroke="currentColor" stroke-width="2"/><path d="M9 19.5 13.2 15l3.3 3.1L23 11.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="23" cy="11.5" r="2" fill="currentColor"/></svg>';
-
         Lampa.SettingsApi.addComponent({ component: PLUGIN_ID, name: 'Интерфейс', icon: icon });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.enabled, type: 'trigger', default: true },
-            field: { name: 'Новый интерфейс', description: 'Единое оформление главной, карточек, поиска, фильма и настроек.' },
-            onChange: function () { applyTheme(); scheduleDecorate(); }
-        });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.density, type: 'select', values: { comfortable: 'Комфортно', compact: 'Компактно' }, default: 'comfortable' },
-            field: { name: 'Размер карточек', description: 'Компактный режим показывает больше контента в строке.' },
-            onChange: applyTheme
-        });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.motion, type: 'select', values: { calm: 'Плавно', minimal: 'Без анимаций' }, default: 'calm' },
-            field: { name: 'Движение', description: 'Отключает декоративные переходы, сохраняя состояния фокуса.' },
-            onChange: applyTheme
-        });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.performance, type: 'select', values: { standard: 'Обычный', lite: 'Экономный' }, default: 'standard' },
-            field: { name: 'Производительность', description: 'Экономный режим отключает динамический фон и тяжёлые тени.' },
-            onChange: applyTheme
-        });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.homeEnabled, type: 'trigger', default: true },
-            field: { name: 'Новая главная', description: 'Добавляет «Продолжить», новые серии, штатные рекомендации и мой список.' },
-            onChange: function () {
-                storageSet('content_rows_lmui_home', boolValue(storageGet(KEYS.homeEnabled, true), true));
-                scheduleHomeRefresh('home-enabled');
-            }
-        });
-        Lampa.SettingsApi.addParam({
-            component: PLUGIN_ID,
-            param: { name: KEYS.homeMode, type: 'select', values: { focused: 'Полная', minimal: 'Минимальная' }, default: 'focused' },
-            field: { name: 'Состав главной', description: 'Минимальная оставляет только «Продолжить» и «Для вас».' },
-            onChange: function () { scheduleHomeRefresh('home-mode'); }
-        });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.enabled, type: 'trigger', default: true }, field: { name: 'Новый интерфейс', description: 'Единое оформление главной, карточек, поиска, фильма и настроек.' }, onChange: function () { applyTheme(); scheduleDecorate(); } });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.density, type: 'select', values: { comfortable: 'Комфортно', compact: 'Компактно' }, default: 'comfortable' }, field: { name: 'Размер карточек', description: 'Компактный режим показывает больше контента в строке.' }, onChange: applyTheme });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.motion, type: 'select', values: { calm: 'Плавно', minimal: 'Без анимаций' }, default: 'calm' }, field: { name: 'Движение', description: 'Отключает декоративные переходы, сохраняя состояния фокуса.' }, onChange: applyTheme });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.performance, type: 'select', values: { standard: 'Обычный', lite: 'Экономный' }, default: 'standard' }, field: { name: 'Производительность', description: 'Экономный режим отключает динамический фон и тяжёлые тени.' }, onChange: applyTheme });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeEnabled, type: 'trigger', default: true }, field: { name: 'Новая главная', description: 'Добавляет продолжение, новые серии, мой список и штатные рекомендации.' }, onChange: function () { storageSet('content_rows_lmui_home', boolValue(storageGet(KEYS.homeEnabled, true), true)); scheduleHomeRefresh('home-enabled'); } });
+        Lampa.SettingsApi.addParam({ component: PLUGIN_ID, param: { name: KEYS.homeMode, type: 'select', values: { focused: 'Полная', minimal: 'Минимальная' }, default: 'focused' }, field: { name: 'Состав главной', description: 'Минимальная оставляет только «Продолжить» и «Для вас».' }, onChange: function () { scheduleHomeRefresh('home-mode'); } });
     }
 
     function destructiveCleanup() {
@@ -1472,42 +1761,31 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     }
 
     function readyToStart() {
-        return !!(
-            document.head &&
-            document.body &&
-            window.Lampa &&
-            Lampa.Storage &&
-            Lampa.SettingsApi &&
-            Lampa.ContentRows
-        );
+        return !!(document.head && document.body && window.Lampa && Lampa.Storage && Lampa.SettingsApi && Lampa.ContentRows);
     }
 
     function followEvents() {
         if (!Lampa.Listener || typeof Lampa.Listener.follow !== 'function') return;
-
         Lampa.Listener.follow('activity', function (event) {
             if (!event) return;
             if (event.type === 'start' || event.type === 'create') {
-                scheduleDecorate();
-                if (event.component === 'main') {
-                    setTimeout(restoreFocus, 180);
-                }
+                setTimeout(function () {
+                    observeActiveActivity();
+                    scheduleDecorate();
+                    if (event.component === 'main') restoreFocus();
+                }, 60);
             }
             if (event.type === 'archive') scheduleDecorate();
         });
-
-        Lampa.Listener.follow('resize_end', function () {
-            applyTheme();
-            scheduleDecorate();
-        });
-
+        Lampa.Listener.follow('resize_end', function () { applyTheme(); scheduleDecorate(); });
         Lampa.Listener.follow('full', function (event) {
-            if (event && (event.type === 'start' || event.type === 'complite')) scheduleDecorate();
+            if (!event) return;
+            if (event.type === 'start' || event.type === 'complite') {
+                scheduleDecorate(event.body && event.body[0]);
+                if (event.type === 'complite') setTimeout(focusPrimaryAction, 80);
+            }
         });
-
-        Lampa.Listener.follow('favorite', function () {
-            scheduleHomeRefresh('favorite');
-        });
+        Lampa.Listener.follow('favorite', function () { scheduleHomeRefresh('favorite'); });
     }
 
     function start() {
@@ -1517,33 +1795,26 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
             if (startAttempts < START_ATTEMPTS) {
                 clearTimeout(startTimer);
                 startTimer = setTimeout(start, 100);
-            } else {
-                console.warn('[Lampa Modern UI] Required Lampa API unavailable');
-            }
+            } else console.warn('[Lampa Modern UI] Required Lampa API unavailable');
             return;
         }
-
         window[READY_FLAG] = true;
         destructiveCleanup();
         injectStyle();
-        removeLegacySettingsComponents();
+        removeHiddenSettingsComponents();
+        try { if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('lampa_personal'); } catch (error) {}
         addSettings();
         registerHomeRow();
         applyTheme();
-        installObserver();
-        installFocusTracking();
+        installInteractionHandlers();
+        installInputModeListeners();
         followEvents();
+        observeActiveActivity();
         scheduleDecorate();
-        if (!initialRefreshScheduled) {
-            initialRefreshScheduled = true;
-            scheduleHomeRefresh('initial-recommendations', 2200);
-        }
-
-        window.addEventListener('orientationchange', function () {
-            applyTheme();
-            scheduleDecorate();
-        }, { passive: true });
-
+        dataProbeAttempts = 0;
+        lastHomeSignature = homeSignature();
+        probeHomeData();
+        window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
         console.info('[Lampa Modern UI] v' + VERSION + ' loaded');
     }
 
@@ -1551,8 +1822,6 @@ body.lampa-modern-ui.lmui-device-tv .selectbox-item {
     else start();
 
     if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
-        Lampa.Listener.follow('app', function (event) {
-            if (event && event.type === 'ready') start();
-        });
+        Lampa.Listener.follow('app', function (event) { if (event && event.type === 'ready') start(); });
     }
 })();
