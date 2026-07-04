@@ -3,8 +3,8 @@
 
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v060_ready__';
-    var VERSION = '0.6.0';
+    var READY_FLAG = '__lampa_modern_ui_v061_ready__';
+    var VERSION = '0.6.1';
     var BACKUP_KEY = 'lmui_core_backup_v2';
     var LEGACY_BACKUP_KEY = 'lmui_core_backup_v1';
     var MIGRATION_KEY = 'lmui_migrated_v050';
@@ -35,7 +35,7 @@
     };
 
     var CSS = String.raw`
-/* Lampa Modern UI 0.6.0
+/* Lampa Modern UI 0.6.1
  * Кинематографичная адаптивная тема без изменения логики Lampa.
  * По умолчанию сохраняет штатные качественные эффекты; оптимизация включается только вручную.
  * Служебные transform/animation настроек, selectbox и modal не переопределяются.
@@ -2289,15 +2289,15 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
     }
 })();
 
-/* Lampa Personal Core 1.0.0
+/* Lampa Personal Core 1.0.1
  * Локальная персональная главная, единая идентификация и объяснимые рекомендации.
  * Профиль один, хранится локально. Облачная синхронизация не используется.
  */
 (function () {
     'use strict';
 
-    var VERSION = '1.0.0';
-    var READY_FLAG = '__lampa_personal_core_v100_ready__';
+    var VERSION = '1.0.1';
+    var READY_FLAG = '__lampa_personal_core_v101_ready__';
     var PROFILE_KEY = 'lpersonal_profile_v1';
     var STYLE_ID = 'lampa-personal-style';
     var COMPONENT_ID = 'lampa_personal';
@@ -2319,6 +2319,7 @@ body.lampa-modern-ui.lmui-performance-lite .activity-wait-refresh {
     var SETTINGS = {
         enabled: 'lpersonal_enabled',
         cardPanel: 'lpersonal_card_panel',
+        hideComments: 'lpersonal_hide_comments',
         homeOrder: 'lpersonal_home_order',
         rowContinue: 'lpersonal_row_continue',
         rowRecent: 'lpersonal_row_recent',
@@ -2609,7 +2610,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
             },
             candidates: {},
             recommendations: { items: [], updatedAt: 0 },
-            home: { order: HOME_IDS.slice(), enabled: enabled },
+            home: { order: HOME_IDS.slice(), enabled: enabled, coldStart: [] },
             interface: {}
         };
     }
@@ -2647,6 +2648,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         HOME_IDS.forEach(function (id) {
             if (base.home.enabled[id] === undefined) base.home.enabled[id] = true;
         });
+        if (!Array.isArray(base.home.coldStart)) base.home.coldStart = [];
         if (!isObject(base.interface)) base.interface = {};
         base.schemaVersion = SCHEMA_VERSION;
         return base;
@@ -2669,6 +2671,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         profile.recent = unique(profile.recent).slice(0, MAX_RECENT);
         profile.collections.watchlist = unique(profile.collections.watchlist).slice(0, 220);
         profile.recommendations.items = asArray(profile.recommendations.items).slice(0, MAX_RECOMMENDATIONS);
+        profile.home.coldStart = unique(asArray(profile.home.coldStart)).slice(0, 30);
 
         trimMap(profile.candidates, function (key, value) {
             return numberValue(value && value.updatedAt, 0);
@@ -2687,6 +2690,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         profile.collections.watchlist.forEach(function (id) { keep[id] = true; });
         Object.keys(profile.history).forEach(function (id) { keep[id] = true; });
         profile.recommendations.items.forEach(function (item) { if (item && item.id) keep[item.id] = true; });
+        profile.home.coldStart.forEach(function (id) { keep[id] = true; });
 
         var cardKeys = Object.keys(profile.cards);
         if (cardKeys.length > MAX_CONTENT) {
@@ -3379,37 +3383,103 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         return [];
     }
 
-    function updateHomeRowIndexes() {
-        if (!profile) return;
-        profile.home.order.forEach(function (id, index) {
-            if (homeRows[id]) homeRows[id].index = 1 + index;
+    function hasPersonalSignals() {
+        return !!(
+            profile.recent.length ||
+            profile.collections.watchlist.length ||
+            Object.keys(profile.history).length ||
+            Object.keys(profile.ratings).length
+        );
+    }
+
+    function coldStartCards() {
+        var personalized = hasPersonalSignals();
+        return canonicalCards(asArray(profile.home.coldStart)).filter(function (card) {
+            var canonical = observeIdentity(card, card);
+            if (profile.exclusions.content[canonical]) return false;
+            if (personalized && profile.history[canonical]) return false;
+            return true;
         });
+    }
+
+    function rememberColdStart(results) {
+        var ids = [];
+        asArray(results).forEach(function (card) {
+            if (!card || !card.id) return;
+            card.source = card.source || 'tmdb';
+            card.media_type = card.media_type || 'movie';
+            var canonical = observeIdentity(card, card);
+            if (ids.indexOf(canonical) < 0) ids.push(canonical);
+            var candidate = profile.candidates[canonical] || { id: canonical, seedIds: [], sourceKinds: [], updatedAt: 0 };
+            candidate.id = canonical;
+            candidate.sourceKinds = unique(asArray(candidate.sourceKinds).concat(['cold_start']));
+            candidate.updatedAt = now();
+            profile.candidates[canonical] = candidate;
+        });
+        if (ids.length) {
+            profile.home.coldStart = ids.slice(0, 30);
+            saveProfile('cold-start');
+        }
+        return canonicalCards(ids);
+    }
+
+    function coldStartCallback(params) {
+        return function (call) {
+            var cached = coldStartCards();
+            if (cached.length) {
+                call({ results: cached.slice(0, numberValue(storageField(SETTINGS.recommendationLimit, 20), 20)), title: hasPersonalSignals() ? 'Возможно, вам понравится' : 'Подборка для начала' });
+                return;
+            }
+            try {
+                var source = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+                if (!source || typeof source.get !== 'function') return call();
+                source.get('trending/movie/week', params || {}, function (json) {
+                    var results = rememberColdStart(json && json.results);
+                    call({
+                        results: results.slice(0, numberValue(storageField(SETTINGS.recommendationLimit, 20), 20)),
+                        title: hasPersonalSignals() ? 'Возможно, вам понравится' : 'Подборка для начала'
+                    });
+                }, function () { call(); }, { life: 1000 * 60 * 60 * 6 });
+            } catch (error) {
+                console.warn('[Lampa Personal] cold-start row failed:', error);
+                call();
+            }
+        };
+    }
+
+    function rowCallback(id, results) {
+        return function (call) {
+            call({ results: results, title: HOME_TITLES[id] });
+        };
+    }
+
+    function updateHomeRowIndexes() {
+        if (homeRows.aggregate) homeRows.aggregate.index = 0;
     }
 
     function registerHomeRows() {
         if (!window.Lampa || !Lampa.ContentRows || typeof Lampa.ContentRows.add !== 'function') return;
-        profile.home.order.forEach(function (id, index) {
-            if (homeRows[id]) return;
-            var row = {
-                name: 'lpersonal_' + id,
-                title: HOME_TITLES[id],
-                index: 1 + index,
-                screen: ['main'],
-                call: function () {
-                    if (!boolValue(storageField(SETTINGS.enabled, true), true)) return;
-                    syncHomeSettingsToProfile(false);
+        if (homeRows.aggregate) return;
+        var row = {
+            name: 'lpersonal_home',
+            title: 'Персональная главная',
+            index: 0,
+            screen: ['main'],
+            call: function (params) {
+                if (!boolValue(storageField(SETTINGS.enabled, true), true)) return;
+                syncHomeSettingsToProfile(false);
+                var callbacks = [];
+                profile.home.order.forEach(function (id) {
                     if (!profile.home.enabled[id]) return;
                     var results = rowResults(id);
-                    if (!results.length) return;
-                    return function (call) {
-                        call({ results: results, title: HOME_TITLES[id] });
-                    };
-                }
-            };
-            homeRows[id] = row;
-            Lampa.ContentRows.add(row);
-        });
-        updateHomeRowIndexes();
+                    if (results.length) callbacks.push(rowCallback(id, results));
+                    else if (id === 'recommendations') callbacks.push(coldStartCallback(params));
+                });
+                return callbacks.length ? callbacks : undefined;
+            }
+        };
+        homeRows.aggregate = row;
+        Lampa.ContentRows.add(row);
     }
 
     function persistHomeSettings() {
@@ -3545,7 +3615,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         var card = profile.cards[canonical];
         var metadata = profile.metadata[canonical] || {};
         if (!card || !card.id || excludedByMetadata(canonical, metadata)) return null;
-        if (profile.history[canonical] && profile.history[canonical].finished) return null;
+        if (profile.history[canonical] && (profile.history[canonical].finished || numberValue(profile.history[canonical].openCount, 0) > 0)) return null;
         if (profile.collections.watchlist.indexOf(canonical) >= 0) return null;
 
         var score = 0;
@@ -3631,7 +3701,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
     }
 
     function explainFactors(factors) {
-        if (!factors || !factors.length) return 'Подобрано по вашей локальной истории и оценкам.';
+        if (!factors || !factors.length) return 'Подобрано с учётом вашей активности и популярности.';
         var first = factors[0];
         if (first.type === 'similar_to') return 'Рекомендуем, потому что вам понравились «' + first.values.join('», «') + '».';
         if (first.type === 'director') return 'Рекомендуем из-за режиссёра: ' + first.values.join(', ') + '.';
@@ -3639,7 +3709,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         if (first.type === 'genre') return 'Рекомендуем по вашим предпочтениям в жанрах: ' + first.values.join(', ') + '.';
         if (first.type === 'country') return 'Подобрано по предпочитаемым странам: ' + first.values.join(', ') + '.';
         if (first.type === 'runtime') return 'Подходит по привычной для вас продолжительности.';
-        return 'Подобрано по вашей локальной истории и оценкам.';
+        return 'Подобрано с учётом вашей активности и популярности.';
     }
 
     function importBuiltInCandidates() {
@@ -3658,6 +3728,12 @@ body.lmui-device-phone .lpersonal-card-panel__button {
 
     function recomputeRecommendations(quiet) {
         importBuiltInCandidates();
+        if (!hasPersonalSignals()) {
+            profile.recommendations = { items: [], updatedAt: now() };
+            saveProfile('recommendations-cold-start', !!quiet);
+            scheduleHomeRefresh();
+            return [];
+        }
         var model = buildPreferenceModel();
         var items = [];
         Object.keys(profile.candidates).forEach(function (canonical) {
@@ -4095,8 +4171,30 @@ body.lmui-device-phone .lpersonal-card-panel__button {
         scheduleHomeRefresh();
     }
 
+    function commentsHidden() {
+        return boolValue(storageField(SETTINGS.hideComments, true), true);
+    }
+
+    function removeBuiltDiscuss(event) {
+        if (!event || event.name !== 'discuss' || !commentsHidden()) return;
+        try {
+            var rendered = event.item && typeof event.item.render === 'function' ? event.item.render(true) : event.item && event.item.html;
+            if (rendered && rendered.remove) rendered.remove();
+            else if (rendered && rendered.parentNode) rendered.parentNode.removeChild(rendered);
+        } catch (error) {
+            console.warn('[Lampa Personal] discuss fallback removal failed:', error);
+        }
+    }
+
     function onFullEvent(event) {
-        if (!event || !event.data) return;
+        if (!event) return;
+        if (event.type === 'build') removeBuiltDiscuss(event);
+        if (!event.data) return;
+
+        // Lampa 3.2.x добавляет раздел обсуждений после события full/start.
+        // Обнуляем payload до сборки rows, чтобы раздел не создавался и не попадал в D-pad навигацию.
+        if (event.type === 'start' && commentsHidden() && event.data.discuss) event.data.discuss = null;
+
         var movie = event.data.movie || event.object && event.object.card;
         if (!movie) return;
         var canonical = observeIdentity(event.object && event.object.card || movie, movie);
@@ -4274,6 +4372,7 @@ body.lmui-device-phone .lpersonal-card-panel__button {
             Lampa.SettingsApi.addComponent({ component: COMPONENT_ID, name: 'Персональная Lampa', icon: icon });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.enabled, type: 'trigger', default: true }, field: { name: 'Включить персональные функции', description: 'Локальная главная, единая история, оценки, коллекции и рекомендации.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh(); } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.cardPanel, type: 'trigger', default: true }, field: { name: 'Расширенная карточка', description: 'Показывать рейтинги, статус сериала, следующую серию и персональные действия.' } });
+            Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.hideComments, type: 'trigger', default: true }, field: { name: 'Скрывать комментарии в карточке', description: 'Не добавлять стандартный раздел комментариев Lampa во внутреннюю карточку фильма или сериала.' } });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: 'lpersonal_manage_home', type: 'button' }, field: { name: 'Настроить персональную главную', description: 'Изменить порядок блоков и включить или отключить их без ручного ввода.' }, onChange: openHomeManager });
             Lampa.SettingsApi.addParam({ component: COMPONENT_ID, param: { name: SETTINGS.homeOrder, type: 'input', values: '', default: HOME_IDS.join(',') }, field: { name: 'Порядок блоков', description: 'Идентификаторы через запятую: continue,recent,new_episodes,watchlist,unfinished,recommendations.' }, onChange: function () { syncHomeSettingsToProfile(); scheduleHomeRefresh(); } });
             [
