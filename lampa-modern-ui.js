@@ -3,16 +3,18 @@
 
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v030_ready__';
-    var VERSION = '0.3.0';
-    var BACKUP_KEY = 'lmui_core_backup_v1';
+    var READY_FLAG = '__lampa_modern_ui_v040_ready__';
+    var VERSION = '0.4.0';
+    var BACKUP_KEY = 'lmui_core_backup_v2';
+    var LEGACY_BACKUP_KEY = 'lmui_core_backup_v1';
 
     var KEYS = {
         enabled: 'lmui_enabled',
         accent: 'lmui_accent',
         motion: 'lmui_motion',
         density: 'lmui_density',
-        performance: 'lmui_performance'
+        performance: 'lmui_performance',
+        focus: 'lmui_focus'
     };
 
     /* Значения по умолчанию подтверждены HAR lampa.mx от 2026-07-04. */
@@ -30,8 +32,9 @@
     };
 
     var CSS = String.raw`
-/* Lampa Modern UI 0.3.0
- * Один визуальный слой без изменения DOM, навигации, поиска и воспроизведения.
+/* Lampa Modern UI 0.4.0
+ * Единый визуальный слой без изменения DOM, навигации, поиска и воспроизведения.
+ * Акцент приглушён; стандартные рывковые keyframe-анимации Lampa заменены лёгкими переходами.
  * Дорогие blur/backdrop-filter не используются.
  */
 
@@ -52,11 +55,20 @@ body.lampa-modern-ui {
     --lmui-radius-sm: 0.72em;
     --lmui-radius-md: 1.02em;
     --lmui-radius-lg: 1.45em;
-    --lmui-fast: 130ms;
-    --lmui-normal: 210ms;
-    --lmui-slow: 280ms;
-    --lmui-ease: cubic-bezier(0.22, 1, 0.36, 1);
-    --lmui-focus-ring: 0 0 0 0.15em rgba(255, 255, 255, 0.94), 0 0 0 0.31em rgba(var(--lmui-accent-rgb), 0.64);
+    --lmui-fast: 105ms;
+    --lmui-normal: 155ms;
+    --lmui-slow: 190ms;
+    --lmui-page: 145ms;
+    --lmui-ease: cubic-bezier(0.2, 0.72, 0.2, 1);
+    --lmui-focus-bg: rgba(255, 255, 255, 0.095);
+    --lmui-focus-border: rgba(255, 255, 255, 0.42);
+    --lmui-focus-ring: 0 0 0 0.09em rgba(255, 255, 255, 0.66), 0 0 0 0.17em rgba(var(--lmui-accent-rgb), 0.18);
+    --lmui-focus-shadow: 0 0.72em 1.85em rgba(0, 0, 0, 0.34);
+    --lmui-text-display: clamp(2.2em, 4.2vw, 4.45em);
+    --lmui-text-heading: clamp(1.58em, 2.3vw, 2.45em);
+    --lmui-text-section: clamp(1.18em, 1.45vw, 1.52em);
+    --lmui-text-body: clamp(1em, 1.05vw, 1.16em);
+    --lmui-text-caption: clamp(0.82em, 0.82vw, 0.94em);
 
     color: var(--lmui-text);
     background: var(--lmui-bg) !important;
@@ -90,15 +102,17 @@ body.lampa-modern-ui.lmui-accent-coral {
 }
 
 body.lampa-modern-ui.lmui-motion-cinematic {
-    --lmui-fast: 165ms;
-    --lmui-normal: 260ms;
-    --lmui-slow: 340ms;
+    --lmui-fast: 130ms;
+    --lmui-normal: 190ms;
+    --lmui-slow: 235ms;
+    --lmui-page: 180ms;
 }
 
 body.lampa-modern-ui.lmui-motion-minimal {
-    --lmui-fast: 80ms;
-    --lmui-normal: 110ms;
-    --lmui-slow: 140ms;
+    --lmui-fast: 70ms;
+    --lmui-normal: 90ms;
+    --lmui-slow: 110ms;
+    --lmui-page: 95ms;
 }
 
 /* Дешёвый статический фон: без canvas, blur и постоянной анимации. */
@@ -155,8 +169,10 @@ body.lampa-modern-ui .head__body {
 
 body.lampa-modern-ui .head__title {
     color: var(--lmui-text);
+    font-size: var(--lmui-text-section);
     font-weight: 650;
-    letter-spacing: -0.028em;
+    letter-spacing: -0.026em;
+    line-height: 1.18;
 }
 
 body.lampa-modern-ui .head__time-date,
@@ -175,9 +191,9 @@ body.lampa-modern-ui .head__action {
 body.lampa-modern-ui .head__action.focus,
 body.lampa-modern-ui .head__action.hover {
     color: #fff;
-    border-color: rgba(255,255,255,0.78);
-    background: linear-gradient(135deg, var(--lmui-accent), var(--lmui-accent-2));
-    transform: translate3d(0, -0.08em, 0) scale(1.055);
+    border-color: var(--lmui-focus-border);
+    background: var(--lmui-focus-bg);
+    transform: none;
     box-shadow: var(--lmui-focus-ring);
 }
 
@@ -221,9 +237,9 @@ body.lampa-modern-ui .menu__item.focus,
 body.lampa-modern-ui .menu__item.traverse,
 body.lampa-modern-ui .menu__item.hover {
     color: #fff;
-    border-color: rgba(var(--lmui-accent-rgb), 0.42);
-    background: linear-gradient(100deg, rgba(var(--lmui-accent-rgb),0.26), rgba(var(--lmui-accent-rgb),0.09));
-    transform: translate3d(0.16em, 0, 0);
+    border-color: rgba(255,255,255,0.24);
+    background: rgba(255,255,255,0.075);
+    transform: none;
 }
 
 body.lampa-modern-ui .menu__item.focus::before,
@@ -235,7 +251,7 @@ body.lampa-modern-ui .menu__item.hover::before {
     bottom: 23%;
     width: 0.17em;
     border-radius: 999em;
-    background: linear-gradient(180deg, var(--lmui-accent), var(--lmui-accent-2));
+    background: rgba(var(--lmui-accent-rgb), 0.72);
 }
 
 body.lampa-modern-ui .menu__item.focus .menu__ico [stroke],
@@ -268,14 +284,16 @@ body.lampa-modern-ui .items-line__head::before {
     height: 1.35em;
     margin-right: 0.62em;
     border-radius: 999em;
-    background: linear-gradient(180deg, var(--lmui-accent), var(--lmui-accent-2));
-    box-shadow: 0 0 1em rgba(var(--lmui-accent-rgb), 0.24);
+    background: rgba(var(--lmui-accent-rgb), 0.72);
+    box-shadow: none;
 }
 
 body.lampa-modern-ui .items-line__title {
     color: var(--lmui-text);
+    font-size: var(--lmui-text-section);
     font-weight: 680;
     letter-spacing: -0.025em;
+    line-height: 1.18;
 }
 
 body.lampa-modern-ui .items-line__more {
@@ -289,9 +307,9 @@ body.lampa-modern-ui .items-line__more {
 body.lampa-modern-ui .items-line__more.focus,
 body.lampa-modern-ui .items-line__more.hover {
     color: #fff;
-    border-color: rgba(var(--lmui-accent-rgb), 0.42);
-    background: rgba(var(--lmui-accent-rgb), 0.16);
-    transform: translate3d(0.08em, 0, 0);
+    border-color: rgba(255,255,255,0.28);
+    background: rgba(255,255,255,0.075);
+    transform: none;
 }
 
 /* Карточки: тени только на фокусе, чтобы не перегружать paint. */
@@ -305,6 +323,11 @@ body.lampa-modern-ui .card__view {
     overflow: visible;
     border-radius: var(--lmui-radius-md);
     background: var(--lmui-bg-elevated);
+    transition: box-shadow var(--lmui-normal) var(--lmui-ease), background-color var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .card__view::after {
+    transition: border-color var(--lmui-fast) var(--lmui-ease), box-shadow var(--lmui-fast) var(--lmui-ease);
 }
 
 body.lampa-modern-ui .card__img,
@@ -348,17 +371,17 @@ body.lampa-modern-ui .card__type {
 body.lampa-modern-ui .card.focus,
 body.lampa-modern-ui .card.hover {
     z-index: 4;
-    transform: translate3d(0, -0.25em, 0) scale(1.035);
+    transform: none;
 }
 
 body.lampa-modern-ui .card.focus .card__img,
 body.lampa-modern-ui .card.hover .card__img {
-    transform: scale(1.018);
+    transform: scale(1.004);
 }
 
 body.lampa-modern-ui .card.focus .card__view,
 body.lampa-modern-ui .card.hover .card__view {
-    box-shadow: 0 1.05em 2.8em rgba(0,0,0,0.43), 0 0 1.65em rgba(var(--lmui-accent-rgb),0.20);
+    box-shadow: var(--lmui-focus-shadow);
 }
 
 body.lampa-modern-ui .card.focus .card__view::after,
@@ -368,13 +391,13 @@ body.lampa-modern-ui .card.hover .card__view::after {
     bottom: -0.14em;
     left: -0.14em;
     z-index: 2;
-    border: 0.14em solid rgba(255,255,255,0.96);
-    border-radius: calc(var(--lmui-radius-md) + 0.14em);
-    box-shadow: 0 0 0 0.12em rgba(var(--lmui-accent-rgb),0.72);
+    border: 0.11em solid rgba(255,255,255,0.78);
+    border-radius: calc(var(--lmui-radius-md) + 0.11em);
+    box-shadow: 0 0 0 0.08em rgba(var(--lmui-accent-rgb),0.18);
 }
 
 body.lampa-modern-ui .card.hover .card__view::after {
-    border-color: rgba(255,255,255,0.64);
+    border-color: rgba(255,255,255,0.52);
 }
 
 body.lampa-modern-ui.lmui-density-compact .card:not(.card--wide):not(.card--collection) {
@@ -404,9 +427,33 @@ body.lampa-modern-ui .simple-button.hover,
 body.lampa-modern-ui .full-start__button.focus,
 body.lampa-modern-ui .full-start__button.hover {
     color: #fff;
-    border-color: rgba(255,255,255,0.78);
-    background: linear-gradient(135deg, var(--lmui-accent), var(--lmui-accent-2));
-    transform: translate3d(0, -0.09em, 0) scale(1.025);
+    border-color: var(--lmui-focus-border);
+    background: var(--lmui-focus-bg);
+    transform: none;
+    box-shadow: var(--lmui-focus-ring);
+}
+
+body.lampa-modern-ui .full-descr__tag,
+body.lampa-modern-ui .tag-count,
+body.lampa-modern-ui .full-review,
+body.lampa-modern-ui .full-review-add {
+    border-color: var(--lmui-border);
+    border-radius: var(--lmui-radius-sm);
+    background: rgba(255,255,255,0.05);
+    transition: background-color var(--lmui-fast) var(--lmui-ease), border-color var(--lmui-fast) var(--lmui-ease), color var(--lmui-fast) var(--lmui-ease), box-shadow var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .full-descr__tag.focus,
+body.lampa-modern-ui .full-descr__tag.hover,
+body.lampa-modern-ui .tag-count.focus,
+body.lampa-modern-ui .tag-count.hover,
+body.lampa-modern-ui .full-review.focus,
+body.lampa-modern-ui .full-review.hover,
+body.lampa-modern-ui .full-review-add.focus,
+body.lampa-modern-ui .full-review-add.hover {
+    color: #fff;
+    border-color: var(--lmui-focus-border);
+    background: var(--lmui-focus-bg);
     box-shadow: var(--lmui-focus-ring);
 }
 
@@ -433,9 +480,11 @@ body.lampa-modern-ui .full-start-new__poster {
 
 body.lampa-modern-ui .full-start-new__title {
     color: var(--lmui-text);
+    font-size: var(--lmui-text-display);
     font-weight: 730;
-    letter-spacing: -0.04em;
-    line-height: 1.08;
+    letter-spacing: -0.042em;
+    line-height: 1.04;
+    text-wrap: balance;
 }
 
 body.lampa-modern-ui .full-start-new__head,
@@ -445,8 +494,10 @@ body.lampa-modern-ui .full-start-new__description {
 }
 
 body.lampa-modern-ui .full-start-new__description {
-    line-height: 1.55;
     width: min(72%, 58em);
+    font-size: var(--lmui-text-body);
+    line-height: 1.58;
+    text-wrap: pretty;
 }
 
 body.lampa-modern-ui .full-start-new__details {
@@ -503,9 +554,9 @@ body.lampa-modern-ui .settings-folder.focus,
 body.lampa-modern-ui .settings-param.focus,
 body.lampa-modern-ui .selectbox-item.focus {
     color: #fff;
-    border-color: rgba(var(--lmui-accent-rgb),0.48);
-    background: rgba(var(--lmui-accent-rgb),0.16) !important;
-    transform: translate3d(0.12em, 0, 0);
+    border-color: rgba(255,255,255,0.28);
+    background: rgba(255,255,255,0.075) !important;
+    transform: none;
 }
 
 body.lampa-modern-ui .settings-param__descr,
@@ -515,8 +566,20 @@ body.lampa-modern-ui .settings-param-title > span {
 }
 
 body.lampa-modern-ui .settings-param__value {
-    color: var(--lmui-accent);
+    color: rgba(255,255,255,0.86);
     font-weight: 650;
+}
+
+body.lampa-modern-ui .selectbox-item.selected:not(.nomark),
+body.lampa-modern-ui .selectbox-item.picked {
+    color: var(--lmui-text);
+    background: rgba(255,255,255,0.045);
+}
+
+body.lampa-modern-ui .selectbox-item.selected:not(.nomark)::after,
+body.lampa-modern-ui .selectbox-item.picked::after {
+    border-color: rgba(var(--lmui-accent-rgb),0.68);
+    opacity: 0.84;
 }
 
 /* Мобильная навигация */
@@ -540,8 +603,395 @@ body.lampa-modern-ui .navigation-bar__item {
 body.lampa-modern-ui .navigation-bar__item.focus,
 body.lampa-modern-ui .navigation-bar__item.active {
     color: #fff;
-    background: rgba(var(--lmui-accent-rgb),0.18);
-    transform: translate3d(0, -0.06em, 0);
+    background: rgba(255,255,255,0.085);
+    transform: none;
+}
+
+/* Стабилизация анимаций: отключаем конфликтующие keyframes ядра и оставляем короткие переходы темы. */
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .card.focus .card__view,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .card.hover .card__view,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .card-episode.focus .full-episode,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .card-episode.hover .full-episode,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .explorer-card__head-img.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .explorer-card__head-img.hover,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .torrent-item.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .torrent-item.hover,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .head__action.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .menu__item.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .simple-button.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .full-start__button.focus,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .full-person.focus .full-person__photo,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .settings-folder.focus .settings-folder__icon,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-trigger-enter {
+    animation: none !important;
+}
+
+@keyframes lmui-page-in {
+    from { opacity: 0.88; }
+    to { opacity: 1; }
+}
+
+@keyframes lmui-sheet-in {
+    from { opacity: 0.9; transform: translate3d(0, 0.35em, 0) scale(0.992); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .activity:not(.activity--load) .activity__body,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-opacity,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .animate-up-content {
+    animation: lmui-page-in var(--lmui-page) ease-out both !important;
+}
+
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .modal.animate .modal__content,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .selectbox.animate .selectbox__content,
+body.lampa-modern-ui.advanced--animation:not(.no--animation) .settings.animate .settings__content {
+    animation: lmui-sheet-in var(--lmui-page) var(--lmui-ease) both !important;
+}
+
+body.lampa-modern-ui .card,
+body.lampa-modern-ui .card__img,
+body.lampa-modern-ui .head__action,
+body.lampa-modern-ui .menu__item,
+body.lampa-modern-ui .simple-button,
+body.lampa-modern-ui .full-start__button,
+body.lampa-modern-ui .settings-folder,
+body.lampa-modern-ui .settings-param,
+body.lampa-modern-ui .selectbox-item,
+body.lampa-modern-ui .search-source,
+body.lampa-modern-ui .search-history-key,
+body.lampa-modern-ui .season-episode,
+body.lampa-modern-ui .full-episode,
+body.lampa-modern-ui .full-person,
+body.lampa-modern-ui .notice,
+body.lampa-modern-ui .simple-keyboard .hg-button,
+body.lampa-modern-ui .torrent-item {
+    animation: none !important;
+}
+
+/* Три спокойных варианта фокуса. Акцент используется как вторичный сигнал, а не заливка. */
+body.lampa-modern-ui.lmui-focus-outline .card.focus,
+body.lampa-modern-ui.lmui-focus-outline .card.hover,
+body.lampa-modern-ui.lmui-focus-outline .head__action.focus,
+body.lampa-modern-ui.lmui-focus-outline .head__action.hover,
+body.lampa-modern-ui.lmui-focus-outline .simple-button.focus,
+body.lampa-modern-ui.lmui-focus-outline .simple-button.hover,
+body.lampa-modern-ui.lmui-focus-outline .full-start__button.focus,
+body.lampa-modern-ui.lmui-focus-outline .full-start__button.hover {
+    transform: none;
+}
+
+body.lampa-modern-ui.lmui-focus-soft .card.focus,
+body.lampa-modern-ui.lmui-focus-soft .card.hover {
+    transform: translate3d(0, -0.06em, 0) scale(1.008);
+}
+
+body.lampa-modern-ui.lmui-focus-soft .menu__item.focus,
+body.lampa-modern-ui.lmui-focus-soft .menu__item.hover,
+body.lampa-modern-ui.lmui-focus-soft .settings-folder.focus,
+body.lampa-modern-ui.lmui-focus-soft .settings-param.focus,
+body.lampa-modern-ui.lmui-focus-soft .selectbox-item.focus,
+body.lampa-modern-ui.lmui-focus-soft .search-source.focus,
+body.lampa-modern-ui.lmui-focus-soft .search-history-key.focus {
+    background: rgba(var(--lmui-accent-rgb), 0.075) !important;
+    border-color: rgba(var(--lmui-accent-rgb), 0.22);
+}
+
+body.lampa-modern-ui.lmui-focus-lift .card.focus,
+body.lampa-modern-ui.lmui-focus-lift .card.hover {
+    transform: translate3d(0, -0.12em, 0) scale(1.018);
+}
+
+body.lampa-modern-ui.lmui-focus-lift .head__action.focus,
+body.lampa-modern-ui.lmui-focus-lift .head__action.hover,
+body.lampa-modern-ui.lmui-focus-lift .simple-button.focus,
+body.lampa-modern-ui.lmui-focus-lift .simple-button.hover,
+body.lampa-modern-ui.lmui-focus-lift .full-start__button.focus,
+body.lampa-modern-ui.lmui-focus-lift .full-start__button.hover {
+    transform: translate3d(0, -0.06em, 0) scale(1.012);
+}
+
+/* Поиск */
+body.lampa-modern-ui .search-box {
+    padding: 0.62em;
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-lg);
+    background: rgba(255,255,255,0.052);
+    box-shadow: none;
+    transition: background-color var(--lmui-fast) var(--lmui-ease), border-color var(--lmui-fast) var(--lmui-ease), box-shadow var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .search-box--focus {
+    border-color: var(--lmui-focus-border);
+    background: rgba(255,255,255,0.075);
+    box-shadow: var(--lmui-focus-ring);
+}
+
+body.lampa-modern-ui .search-box .search__input,
+body.lampa-modern-ui .simple-keyboard-input {
+    color: var(--lmui-text);
+    font-size: var(--lmui-text-body);
+    line-height: 1.35;
+}
+
+body.lampa-modern-ui .search-looking__text,
+body.lampa-modern-ui .search-history-empty {
+    color: var(--lmui-muted);
+}
+
+body.lampa-modern-ui .search-source,
+body.lampa-modern-ui .search-history-key {
+    border: 0.08em solid transparent;
+    border-radius: 999em;
+    background: rgba(255,255,255,0.052);
+    color: var(--lmui-muted);
+    transition: background-color var(--lmui-fast) var(--lmui-ease), border-color var(--lmui-fast) var(--lmui-ease), color var(--lmui-fast) var(--lmui-ease), transform var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .search-source.active {
+    color: var(--lmui-text);
+    border-color: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.085);
+}
+
+body.lampa-modern-ui .search-source.focus,
+body.lampa-modern-ui .search-history-key.focus {
+    color: #fff;
+    border-color: var(--lmui-focus-border);
+    background: var(--lmui-focus-bg);
+    box-shadow: var(--lmui-focus-ring);
+}
+
+/* Экран персоны */
+body.lampa-modern-ui .person-start__poster,
+body.lampa-modern-ui .person-start__img {
+    border-radius: var(--lmui-radius-lg);
+}
+
+body.lampa-modern-ui .person-start__poster {
+    overflow: hidden;
+    border: 0.08em solid var(--lmui-border);
+    background: var(--lmui-bg-elevated);
+    box-shadow: 0 1em 2.6em rgba(0,0,0,0.34);
+}
+
+body.lampa-modern-ui .person-start__name {
+    color: var(--lmui-text);
+    font-size: var(--lmui-text-heading);
+    font-weight: 720;
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+}
+
+body.lampa-modern-ui .person-start__place,
+body.lampa-modern-ui .person-start__descr,
+body.lampa-modern-ui .person-start__descr-mobile {
+    color: var(--lmui-muted);
+    font-size: var(--lmui-text-body);
+    line-height: 1.55;
+}
+
+body.lampa-modern-ui .person-start__tag,
+body.lampa-modern-ui .person-start__icons > div {
+    border: 0.08em solid var(--lmui-border);
+    border-radius: 999em;
+    background: rgba(255,255,255,0.052);
+}
+
+/* Сезоны и эпизоды */
+body.lampa-modern-ui .season-episode,
+body.lampa-modern-ui .full-episode {
+    overflow: hidden;
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-md);
+    background: rgba(255,255,255,0.048);
+    transition: background-color var(--lmui-fast) var(--lmui-ease), border-color var(--lmui-fast) var(--lmui-ease), transform var(--lmui-fast) var(--lmui-ease), box-shadow var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .season-episode__img,
+body.lampa-modern-ui .season-episode__img > img,
+body.lampa-modern-ui .full-episode__img,
+body.lampa-modern-ui .full-episode__img img {
+    border-radius: calc(var(--lmui-radius-md) - 0.08em);
+}
+
+body.lampa-modern-ui .season-episode__title,
+body.lampa-modern-ui .full-episode__name {
+    color: var(--lmui-text);
+    font-weight: 640;
+    line-height: 1.28;
+    letter-spacing: -0.016em;
+}
+
+body.lampa-modern-ui .season-episode__time,
+body.lampa-modern-ui .season-episode__info,
+body.lampa-modern-ui .full-episode__date,
+body.lampa-modern-ui .full-episode__num {
+    color: var(--lmui-muted);
+    font-size: var(--lmui-text-caption);
+}
+
+body.lampa-modern-ui .season-episode.focus,
+body.lampa-modern-ui .full-episode.focus,
+body.lampa-modern-ui .card-episode.focus .full-episode {
+    border-color: var(--lmui-focus-border);
+    background: rgba(255,255,255,0.082);
+    box-shadow: var(--lmui-focus-ring);
+}
+
+body.lampa-modern-ui .season-episode.focus::after,
+body.lampa-modern-ui .full-episode.focus::after,
+body.lampa-modern-ui .card-episode.focus .full-episode::after {
+    display: none !important;
+}
+
+/* Люди, широкие карточки и коллекции */
+body.lampa-modern-ui .full-person__photo,
+body.lampa-modern-ui .card--wide .card__view,
+body.lampa-modern-ui .card--collection .card__view {
+    border-radius: var(--lmui-radius-md);
+}
+
+body.lampa-modern-ui .full-person__name {
+    color: var(--lmui-text);
+    font-weight: 620;
+    line-height: 1.25;
+}
+
+body.lampa-modern-ui .full-person__role {
+    color: var(--lmui-muted);
+    font-size: var(--lmui-text-caption);
+}
+
+body.lampa-modern-ui .full-person.focus .full-person__photo,
+body.lampa-modern-ui .full-person.hover .full-person__photo {
+    box-shadow: var(--lmui-focus-ring), var(--lmui-focus-shadow);
+}
+
+/* Уведомления */
+body.lampa-modern-ui .bell__item,
+body.lampa-modern-ui .notice {
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-md);
+    background: var(--lmui-surface) !important;
+    box-shadow: 0 0.9em 2.2em rgba(0,0,0,0.32);
+}
+
+body.lampa-modern-ui .notice__title,
+body.lampa-modern-ui .bell__item-text {
+    color: var(--lmui-text);
+    font-weight: 640;
+}
+
+body.lampa-modern-ui .notice__descr,
+body.lampa-modern-ui .notice__time {
+    color: var(--lmui-muted);
+    line-height: 1.45;
+}
+
+body.lampa-modern-ui .notice.focus {
+    border-color: var(--lmui-focus-border);
+    background: rgba(255,255,255,0.075) !important;
+    box-shadow: var(--lmui-focus-ring), var(--lmui-focus-shadow);
+}
+
+/* Пустые состояния, ошибки и загрузка */
+body.lampa-modern-ui .empty,
+body.lampa-modern-ui .error,
+body.lampa-modern-ui .loading-layer__box,
+body.lampa-modern-ui .empty-filter {
+    color: var(--lmui-text);
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-lg);
+    background: rgba(255,255,255,0.045);
+}
+
+body.lampa-modern-ui .empty__title,
+body.lampa-modern-ui .error__title,
+body.lampa-modern-ui .empty-filter__title {
+    color: var(--lmui-text);
+    font-size: var(--lmui-text-heading);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+}
+
+body.lampa-modern-ui .empty__descr,
+body.lampa-modern-ui .error__text,
+body.lampa-modern-ui .empty-filter__subtitle,
+body.lampa-modern-ui .loading-layer__text {
+    color: var(--lmui-muted);
+    font-size: var(--lmui-text-body);
+    line-height: 1.5;
+}
+
+body.lampa-modern-ui .empty-template {
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-md);
+    background: rgba(255,255,255,0.045);
+}
+
+/* Экранная клавиатура */
+body.lampa-modern-ui .simple-keyboard {
+    border: 0.08em solid var(--lmui-border);
+    border-radius: var(--lmui-radius-lg);
+    background: rgba(10,13,20,0.98);
+}
+
+body.lampa-modern-ui .simple-keyboard .hg-button,
+body.lampa-modern-ui .simple-keyboard-buttons__enter,
+body.lampa-modern-ui .simple-keyboard-buttons__cancel {
+    color: var(--lmui-text);
+    border: 0.08em solid var(--lmui-border);
+    border-radius: 0.72em;
+    background: rgba(255,255,255,0.055);
+    box-shadow: none;
+    transition: background-color var(--lmui-fast) var(--lmui-ease), border-color var(--lmui-fast) var(--lmui-ease), color var(--lmui-fast) var(--lmui-ease), transform var(--lmui-fast) var(--lmui-ease);
+}
+
+body.lampa-modern-ui .simple-keyboard .hg-button.hg-activeButton,
+body.lampa-modern-ui .simple-keyboard .hg-button.focus,
+body.lampa-modern-ui .simple-keyboard .hg-button:hover,
+body.lampa-modern-ui .simple-keyboard-buttons__enter.focus,
+body.lampa-modern-ui .simple-keyboard-buttons__cancel.focus {
+    color: #fff;
+    border-color: var(--lmui-focus-border);
+    background: var(--lmui-focus-bg);
+    box-shadow: var(--lmui-focus-ring);
+    transform: none;
+}
+
+/* Explorer, списки источников и файлов */
+body.lampa-modern-ui .explorer-card,
+body.lampa-modern-ui .explorer-list,
+body.lampa-modern-ui .torrent-item {
+    border-color: var(--lmui-border);
+    background: rgba(255,255,255,0.045);
+}
+
+body.lampa-modern-ui .explorer-card__head-img,
+body.lampa-modern-ui .explorer-card__head-img > img {
+    border-radius: var(--lmui-radius-md);
+}
+
+body.lampa-modern-ui .explorer-card__title,
+body.lampa-modern-ui .torrent-item__title {
+    color: var(--lmui-text);
+    font-weight: 650;
+    letter-spacing: -0.018em;
+}
+
+body.lampa-modern-ui .explorer-card__descr,
+body.lampa-modern-ui .explorer-card__genres,
+body.lampa-modern-ui .torrent-item__details {
+    color: var(--lmui-muted);
+    line-height: 1.45;
+}
+
+body.lampa-modern-ui .torrent-item.focus,
+body.lampa-modern-ui .explorer-card__head-img.focus {
+    border-color: var(--lmui-focus-border);
+    background: rgba(255,255,255,0.078);
+    box-shadow: var(--lmui-focus-ring);
 }
 
 /* TV */
@@ -557,7 +1007,7 @@ body.lampa-modern-ui .navigation-bar__item.active {
 
     body.lampa-modern-ui .card.focus,
     body.lampa-modern-ui .card.hover {
-        transform: translate3d(0, -0.29em, 0) scale(1.042);
+        transform: none;
     }
 }
 
@@ -600,7 +1050,7 @@ body.lampa-modern-ui .navigation-bar__item.active {
 
     body.lampa-modern-ui .card.focus,
     body.lampa-modern-ui .card.hover {
-        transform: translate3d(0, -0.08em, 0) scale(1.015);
+        transform: none;
     }
 
     body.lampa-modern-ui .full-start-new__right {
@@ -634,6 +1084,139 @@ body.lampa-modern-ui .navigation-bar__item.active {
         border-left: 0;
         border-bottom-right-radius: 0;
         border-bottom-left-radius: 0;
+    }
+}
+
+/* Телефон: самостоятельная компоновка, а не уменьшенная TV-версия. */
+@media screen and (max-width: 600px) {
+    body.lampa-modern-ui {
+        --lmui-text-display: clamp(2.05em, 10vw, 3.05em);
+        --lmui-text-heading: clamp(1.5em, 6.6vw, 2.05em);
+        --lmui-text-section: clamp(1.18em, 5vw, 1.42em);
+        --lmui-text-body: clamp(0.98em, 4vw, 1.1em);
+        --lmui-text-caption: clamp(0.8em, 3.25vw, 0.92em);
+    }
+
+    body.lampa-modern-ui .wrap__content,
+    body.lampa-modern-ui .activity__body {
+        padding-left: max(0.72em, env(safe-area-inset-left));
+        padding-right: max(0.72em, env(safe-area-inset-right));
+    }
+
+    body.lampa-modern-ui .items-line__head {
+        min-height: 2.65em;
+        margin-bottom: 0.16em;
+    }
+
+    body.lampa-modern-ui .items-line__head::before {
+        width: 0.14em;
+        height: 1.08em;
+        margin-right: 0.48em;
+        opacity: 0.72;
+    }
+
+    body.lampa-modern-ui .items-line__more {
+        padding: 0.42em 0.68em;
+    }
+
+    body.lampa-modern-ui .search-box {
+        padding: 0.5em;
+        border-radius: 1.15em;
+    }
+
+    body.lampa-modern-ui .search-source {
+        padding-top: 0.5em;
+        padding-bottom: 0.5em;
+    }
+
+    body.lampa-modern-ui .simple-keyboard {
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        border-radius: 1.25em 1.25em 0 0;
+    }
+
+    body.lampa-modern-ui .simple-keyboard .hg-button {
+        min-height: 2.65em;
+        border-radius: 0.68em;
+    }
+
+    body.lampa-modern-ui .person-start__body {
+        display: block;
+    }
+
+    body.lampa-modern-ui .person-start__left {
+        width: min(48vw, 12.5em);
+        margin: 0 auto 1.2em;
+    }
+
+    body.lampa-modern-ui .person-start__right {
+        width: 100%;
+    }
+
+    body.lampa-modern-ui .person-start__name,
+    body.lampa-modern-ui .person-start__place {
+        text-align: center;
+    }
+
+    body.lampa-modern-ui .person-start__tags,
+    body.lampa-modern-ui .person-start__icons {
+        justify-content: center;
+    }
+
+    body.lampa-modern-ui .full-start-new__buttons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55em;
+    }
+
+    body.lampa-modern-ui .full-start-new__buttons .full-start__button {
+        justify-content: center;
+        min-height: 3.15em;
+        margin: 0;
+    }
+
+    body.lampa-modern-ui .full-start-new__buttons .full-start__button:first-child {
+        grid-column: 1 / -1;
+    }
+
+    body.lampa-modern-ui .season-episode,
+    body.lampa-modern-ui .full-episode {
+        border-radius: 1em;
+    }
+
+    body.lampa-modern-ui .season-episode__body,
+    body.lampa-modern-ui .full-episode__body {
+        min-height: 4.3em;
+    }
+
+    body.lampa-modern-ui .modal,
+    body.lampa-modern-ui .selectbox,
+    body.lampa-modern-ui .settings {
+        align-items: flex-end;
+    }
+
+    body.lampa-modern-ui .modal__content,
+    body.lampa-modern-ui .selectbox__content,
+    body.lampa-modern-ui .settings__content {
+        width: 100%;
+        max-height: min(86vh, 52em);
+        margin: 0;
+        border-radius: 1.35em 1.35em 0 0;
+    }
+
+    body.lampa-modern-ui .modal.animate .modal__content,
+    body.lampa-modern-ui .selectbox.animate .selectbox__content,
+    body.lampa-modern-ui .settings.animate .settings__content {
+        animation-name: lmui-sheet-in !important;
+    }
+
+    body.lampa-modern-ui .navigation-bar__body {
+        box-shadow: 0 0.75em 2em rgba(0,0,0,0.34);
+    }
+
+    body.lampa-modern-ui .navigation-bar__item {
+        min-height: 3.1em;
     }
 }
 
@@ -727,46 +1310,96 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
         console.info('[Lampa Modern UI] ' + message);
     }
 
-    function ensureCoreBackup() {
-        var existing = storageGet(BACKUP_KEY, '');
-        if (existing && typeof existing === 'object' && Object.keys(existing).length) return existing;
+    function normalizeBackupState(raw) {
+        if (!raw || typeof raw !== 'object') return { version: 2, fields: {} };
+        if (raw.version === 2 && raw.fields && typeof raw.fields === 'object') return raw;
 
-        var backup = {};
-        Object.keys(CORE_DEFAULTS).forEach(function (name) {
-            var value = storageField(name);
-            backup[name] = value === undefined ? CORE_DEFAULTS[name] : value;
+        var migrated = { version: 2, fields: {} };
+        Object.keys(raw).forEach(function (name) {
+            migrated.fields[name] = { original: raw[name], applied: null };
         });
-        storageSet(BACKUP_KEY, backup);
-        return backup;
+        return migrated;
     }
 
-    function setCoreValues(values) {
+    function loadBackupState() {
+        var current = storageGet(BACKUP_KEY, '');
+        if (current && typeof current === 'object') return normalizeBackupState(current);
+
+        var legacy = storageGet(LEGACY_BACKUP_KEY, '');
+        if (legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
+            var migrated = normalizeBackupState(legacy);
+            storageSet(BACKUP_KEY, migrated);
+            storageSet(LEGACY_BACKUP_KEY, '');
+            return migrated;
+        }
+        return { version: 2, fields: {} };
+    }
+
+    function saveBackupState(state) {
+        storageSet(BACKUP_KEY, state);
+    }
+
+    function applyCoreValues(values, force) {
+        var state = loadBackupState();
+
         Object.keys(values).forEach(function (name) {
             var current = storageField(name);
+            if (current === undefined) current = CORE_DEFAULTS[name];
+
+            var record = state.fields[name];
+            if (!record || typeof record !== 'object') {
+                record = { original: current, applied: null };
+                state.fields[name] = record;
+            }
+
+            var wasChangedAfterPlugin = record.applied !== null && current !== record.applied;
+            if (wasChangedAfterPlugin && !force) return;
+
+            if (wasChangedAfterPlugin && force) record.original = current;
+
             if (current !== values[name]) storageSet(name, values[name]);
+            record.applied = values[name];
         });
+
+        saveBackupState(state);
     }
 
     function restoreCoreSettings(silent) {
-        var backup = storageGet(BACKUP_KEY, '');
-        if (!backup || typeof backup !== 'object' || !Object.keys(backup).length) {
+        var state = loadBackupState();
+        var names = Object.keys(state.fields || {});
+        if (!names.length) {
             if (!silent) notify('Сохранённые настройки Lampa не найдены');
             return false;
         }
 
-        setCoreValues(backup);
+        var restored = 0;
+        var preserved = 0;
+        names.forEach(function (name) {
+            var record = state.fields[name];
+            if (!record || typeof record !== 'object') return;
+
+            var current = storageField(name);
+            if (record.applied === null || current === record.applied) {
+                if (current !== record.original) storageSet(name, record.original);
+                restored += 1;
+            } else {
+                preserved += 1;
+            }
+        });
+
         storageSet(BACKUP_KEY, '');
-        if (!silent) notify('Исходные настройки Lampa восстановлены');
-        return true;
+        storageSet(LEGACY_BACKUP_KEY, '');
+        if (!silent) {
+            notify(preserved ? 'Настройки восстановлены; ручные изменения сохранены (' + preserved + ')' : 'Исходные настройки Lampa восстановлены');
+        }
+        return restored > 0 || preserved > 0;
     }
 
-    function applyPerformanceProfile(profile) {
+    function applyPerformanceProfile(profile, force) {
         if (profile === 'visual') {
             restoreCoreSettings(true);
             return;
         }
-
-        ensureCoreBackup();
 
         var values = {
             animation: true,
@@ -781,7 +1414,7 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
             interface_sound_play: false
         };
 
-        setCoreValues(values);
+        applyCoreValues(values, !!force);
     }
 
     function removeThemeClasses(body) {
@@ -803,22 +1436,25 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
         var motion = String(storageGet(KEYS.motion, 'balanced') || 'balanced');
         var density = String(storageGet(KEYS.density, 'comfortable') || 'comfortable');
         var performance = String(storageGet(KEYS.performance, 'balanced') || 'balanced');
+        var focus = String(storageGet(KEYS.focus, 'outline') || 'outline');
 
         if (['azure', 'violet', 'emerald', 'coral'].indexOf(accent) < 0) accent = 'azure';
         if (['balanced', 'cinematic', 'minimal'].indexOf(motion) < 0) motion = 'balanced';
         if (['comfortable', 'compact'].indexOf(density) < 0) density = 'comfortable';
         if (['visual', 'balanced', 'lite'].indexOf(performance) < 0) performance = 'balanced';
+        if (['outline', 'soft', 'lift'].indexOf(focus) < 0) focus = 'outline';
 
         body.classList.add(
             'lampa-modern-ui',
             'lmui-accent-' + accent,
             'lmui-motion-' + motion,
             'lmui-density-' + density,
-            'lmui-performance-' + performance
+            'lmui-performance-' + performance,
+            'lmui-focus-' + focus
         );
     }
 
-    function applyAll() {
+    function applyAll(forceProfile) {
         var enabled = normalizeBoolean(storageGet(KEYS.enabled, true), true);
         if (!enabled) {
             restoreCoreSettings(true);
@@ -828,7 +1464,7 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
 
         var performance = String(storageGet(KEYS.performance, 'balanced') || 'balanced');
         if (['visual', 'balanced', 'lite'].indexOf(performance) < 0) performance = 'balanced';
-        applyPerformanceProfile(performance);
+        applyPerformanceProfile(performance, !!forceProfile);
         applyTheme();
     }
 
@@ -862,7 +1498,7 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
                 component: PLUGIN_ID,
                 param: { name: KEYS.enabled, type: 'trigger', default: true },
                 field: { name: 'Включить Modern UI', description: 'Меняет только оформление и параметры производительности.' },
-                onChange: applyAll
+                onChange: function () { applyAll(true); }
             });
 
             Lampa.SettingsApi.addParam({
@@ -874,6 +1510,18 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
                     default: 'azure'
                 },
                 field: { name: 'Акцент', description: 'Цвет фокуса, активных кнопок и маркеров.' },
+                onChange: applyTheme
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: PLUGIN_ID,
+                param: {
+                    name: KEYS.focus,
+                    type: 'select',
+                    values: { outline: 'Спокойный контур', soft: 'Мягкая подсветка', lift: 'Лёгкий подъём' },
+                    default: 'outline'
+                },
+                field: { name: 'Стиль фокуса', description: 'Контрастный, но без яркой акцентной заливки. Для слабого TV рекомендован спокойный контур.' },
                 onChange: applyTheme
             });
 
@@ -917,7 +1565,7 @@ body.lampa-modern-ui.lmui-performance-lite .modal__content {
                     name: 'Профиль производительности',
                     description: 'Оптимизированный отключает canvas-фон и blur. Экономный дополнительно снижает качество постеров до w200.'
                 },
-                onChange: applyAll
+                onChange: function () { applyAll(true); }
             });
 
             Lampa.SettingsApi.addParam({
