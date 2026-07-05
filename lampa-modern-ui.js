@@ -1,10 +1,10 @@
-/* Lampa Modern UI 0.13.2 — lightweight permanent Shots guard. */
+/* Lampa Modern UI 0.13.3 — lightweight permanent Shots guard. */
 (function () {
     'use strict';
 
     var GUARD_KEY = '__LMUI_SHOTS_GUARD__';
     var previous = window[GUARD_KEY];
-    if (previous && previous.version === '0.13.2') {
+    if (previous && previous.version === '0.13.3') {
         if (typeof previous.enforce === 'function') previous.enforce('duplicate-load');
         return;
     }
@@ -308,7 +308,7 @@
     }
 
     var api = {
-        version: '0.13.2',
+        version: '0.13.3',
         state: state,
         enforce: enforce,
         removeFrom: removeShotsNodes,
@@ -322,14 +322,14 @@
     enforce('bootstrap');
 })();
 
-/* Lampa Modern UI 0.13.2
+/* Lampa Modern UI 0.13.3
  * Единый UI-слой поверх штатной навигации Lampa.
  * Главная не подменяется: добавляется только нативный ряд продолжения просмотра.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.13.2';
+    var VERSION = '0.13.3';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
     var RUNTIME_KEY = '__LMUI_RUNTIME__';
@@ -1248,9 +1248,9 @@ body.lampa-modern-ui .simple-keyboard .hg-button {
     font-size: 0.94em;
 }
 
-body.lampa-modern-ui .simple-keyboard-buttons,
-body.lampa-modern-ui .simple-keyboard-buttons__enter,
-body.lampa-modern-ui .simple-keyboard-buttons__cancel {
+body.lampa-modern-ui .main-search .simple-keyboard-buttons,
+body.lampa-modern-ui .main-search .simple-keyboard-buttons__enter,
+body.lampa-modern-ui .main-search .simple-keyboard-buttons__cancel {
     display: none !important;
 }
 
