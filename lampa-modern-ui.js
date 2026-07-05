@@ -1,10 +1,10 @@
-/* Lampa Modern UI 0.13.3 — lightweight permanent Shots guard. */
+/* Lampa Modern UI 0.13.4 — lightweight permanent Shots guard. */
 (function () {
     'use strict';
 
     var GUARD_KEY = '__LMUI_SHOTS_GUARD__';
     var previous = window[GUARD_KEY];
-    if (previous && previous.version === '0.13.3') {
+    if (previous && previous.version === '0.13.4') {
         if (typeof previous.enforce === 'function') previous.enforce('duplicate-load');
         return;
     }
@@ -308,7 +308,7 @@
     }
 
     var api = {
-        version: '0.13.3',
+        version: '0.13.4',
         state: state,
         enforce: enforce,
         removeFrom: removeShotsNodes,
@@ -322,14 +322,14 @@
     enforce('bootstrap');
 })();
 
-/* Lampa Modern UI 0.13.3
+/* Lampa Modern UI 0.13.4
  * Единый UI-слой поверх штатной навигации Lampa.
  * Главная не подменяется: добавляется только нативный ряд продолжения просмотра.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.13.3';
+    var VERSION = '0.13.4';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
     var RUNTIME_KEY = '__LMUI_RUNTIME__';
@@ -604,7 +604,50 @@ body.lampa-modern-ui .head__action.hover {
     border-color: var(--lmui-accent);
     background: var(--lmui-accent-soft);
     box-shadow: var(--lmui-focus-ring);
-    transform: translateY(-0.05em);
+    transform: translateY(-0.03em);
+}
+
+/* TV header: keep only frequent actions and a compact clock. */
+body.lampa-modern-ui.lmui-tv-ui .head__body {
+    min-height: 3.35em;
+    padding-top: 0.46em;
+    padding-bottom: 0.5em;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.34em;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__action {
+    width: 2.65em;
+    height: 2.65em;
+    margin-left: 0;
+    border-radius: 0.78em;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__action.open--profile,
+body.lampa-modern-ui.lmui-tv-ui .head__action.full--screen,
+body.lampa-modern-ui.lmui-tv-ui .head__action.open--broadcast {
+    display: none !important;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__markers,
+body.lampa-modern-ui.lmui-tv-ui .head__time-date,
+body.lampa-modern-ui.lmui-tv-ui .head__time-week {
+    display: none !important;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__time {
+    margin-left: 0.7em;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .head__time-now {
+    color: var(--lmui-muted);
+    font-size: 1.02em;
+    font-weight: 650;
+    letter-spacing: 0.015em;
 }
 
 /* Navigation */
@@ -687,11 +730,14 @@ body.lampa-modern-ui .items-line__head {
 }
 
 body.lampa-modern-ui .items-line__title {
+    overflow: hidden;
     color: var(--lmui-text);
     font-size: var(--lmui-section);
     font-weight: 720;
     letter-spacing: -0.027em;
     line-height: 1.18;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 body.lampa-modern-ui .items-line__more {
@@ -719,6 +765,7 @@ body.lampa-modern-ui .card {
 }
 
 body.lampa-modern-ui .card__view {
+    position: relative;
     overflow: hidden;
     margin-bottom: 0.64em;
     border: 0.075em solid rgba(255, 255, 255, 0.07);
@@ -743,6 +790,7 @@ body.lampa-modern-ui .card__img {
 body.lampa-modern-ui .card__title {
     overflow: hidden;
     display: -webkit-box;
+    min-height: 2.56em;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -750,6 +798,22 @@ body.lampa-modern-ui .card__title {
     font-weight: 630;
     line-height: 1.28;
     letter-spacing: -0.016em;
+}
+
+/* TV cards: title, year/episode, progress and at most one quality badge. */
+body.lampa-modern-ui.lmui-tv-ui .card__vote,
+body.lampa-modern-ui.lmui-tv-ui .card__type,
+body.lampa-modern-ui.lmui-tv-ui .card__marker,
+body.lampa-modern-ui.lmui-tv-ui .card__icons,
+body.lampa-modern-ui.lmui-tv-ui .card__icons-inner {
+    display: none !important;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .card__quality {
+    max-width: 5.8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 body.lampa-modern-ui .card__age {
@@ -802,24 +866,51 @@ body.lampa-modern-ui .card.hover {
 }
 
 body.lampa-modern-ui .card.focus {
-    transform: translateY(-0.1em) scale(1.032);
+    transform: translateY(-0.045em) scale(1.018);
 }
 
-body.lampa-modern-ui .card.focus .card__view,
-body.lampa-modern-ui .card.hover .card__view {
-    border-color: var(--lmui-accent-strong);
+body.lampa-modern-ui .card.focus .card__view {
+    border-color: #fff;
     background: var(--lmui-surface-raised);
-    box-shadow: var(--lmui-focus-ring), var(--lmui-shadow-card);
+    box-shadow: 0 0 0 0.12em #fff, 0 0 0 0.27em rgba(105, 167, 255, 0.72), 0 0.9em 2.2em rgba(0, 0, 0, 0.44);
 }
 
-body.lampa-modern-ui .card.focus .card__img,
-body.lampa-modern-ui .card.hover .card__img {
-    transform: scale(1.027);
+body.lampa-modern-ui .card.hover:not(.focus) .card__view {
+    border-color: rgba(145, 190, 255, 0.72);
+    background: var(--lmui-surface-raised);
+    box-shadow: 0 0 0 0.08em rgba(105, 167, 255, 0.5), 0 0.65em 1.5em rgba(0, 0, 0, 0.34);
 }
 
-body.lampa-modern-ui .card.focus .card__view::after,
-body.lampa-modern-ui .card.hover .card__view::after {
+body.lampa-modern-ui .card.focus .card__img {
+    transform: scale(1.008);
+}
+
+body.lampa-modern-ui .card.hover:not(.focus) .card__img {
+    transform: scale(1.004);
+}
+
+body.lampa-modern-ui .card.focus .card__view::after {
+    content: "";
+    display: block !important;
+    position: absolute;
+    left: 18%;
+    right: 18%;
+    bottom: 0.28em;
+    height: 0.18em;
+    border-radius: 99em;
+    background: #fff;
+    box-shadow: 0 0 0.65em rgba(105, 167, 255, 0.85);
+    pointer-events: none;
+}
+
+body.lampa-modern-ui .card.hover:not(.focus) .card__view::after {
     display: none !important;
+}
+
+@supports selector(.mapping--line:has(.card.focus)) {
+    body.lampa-modern-ui.lmui-tv-ui .mapping--line:has(.card.focus) > .card:not(.focus) {
+        opacity: 0.88;
+    }
 }
 
 body.lampa-modern-ui.lmui-density-compact .card:not(.card--wide):not(.card--collection):not(.card--category) {
@@ -1205,6 +1296,12 @@ body.lampa-modern-ui .simple-keyboard {
     box-shadow: 0 0.8em 2.2em rgba(0, 0, 0, 0.25);
 }
 
+body.lampa-modern-ui.lmui-tv-ui .main-search .simple-keyboard {
+    width: min(100%, 56em);
+    margin-inline: auto;
+    padding: 0.46em;
+}
+
 body.lampa-modern-ui .simple-keyboard-input,
 body.lampa-modern-ui .search-box .search__input {
     box-sizing: border-box;
@@ -1248,9 +1345,44 @@ body.lampa-modern-ui .simple-keyboard .hg-button {
     font-size: 0.94em;
 }
 
+body.lampa-modern-ui.lmui-tv-ui .main-search .simple-keyboard .hg-row {
+    gap: 0.18em;
+    margin-bottom: 0.18em;
+}
+
+body.lampa-modern-ui.lmui-tv-ui .main-search .simple-keyboard .hg-button {
+    min-height: 2.95em;
+    padding-inline: 0.42em;
+    border-radius: 0.62em;
+    font-size: 1em;
+}
+
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button-bksp,
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button-space,
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button-lang,
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button-numbers,
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button[data-skbtn="{bksp}"],
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button[data-skbtn="{space}"],
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button[data-skbtn="{language}"],
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button[data-skbtn="{numbers}"] {
+    min-width: 4.2em;
+    background: rgba(105, 167, 255, 0.11);
+    color: var(--lmui-text);
+    font-weight: 720;
+}
+
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button-space,
+body.lampa-modern-ui .main-search .simple-keyboard .hg-button[data-skbtn="{space}"] {
+    flex-grow: 2.4 !important;
+}
+
 body.lampa-modern-ui .main-search .simple-keyboard-buttons,
 body.lampa-modern-ui .main-search .simple-keyboard-buttons__enter,
 body.lampa-modern-ui .main-search .simple-keyboard-buttons__cancel {
+    display: none !important;
+}
+
+body.lampa-modern-ui .main-search .simple-keyboard-mic.lmui-keyboard-mic-unavailable {
     display: none !important;
 }
 
@@ -1325,6 +1457,20 @@ body.lampa-modern-ui .search-source--loading::after {
 body.lampa-modern-ui .search__results {
     margin-top: 0.45em;
     padding-top: 0;
+}
+
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="loading"] .search__results,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="results"] .search__results,
+body.lampa-modern-ui .lmui-search-screen[data-lmui-search-state="empty"] .search__results {
+    min-height: 23em;
+}
+
+body.lampa-modern-ui .main-search .content-loading,
+body.lampa-modern-ui .main-search .search__results > .empty,
+body.lampa-modern-ui .main-search .search__results .empty {
+    box-sizing: border-box;
+    min-height: 23em;
+    margin: 0.45em 0 0;
 }
 
 body.lampa-modern-ui .search__results .items-line {
@@ -1569,23 +1715,18 @@ body.lampa-modern-ui .activity--active.lmui-detail-series .season-episode {
 
 /* Input mode is independent from viewport layout. */
 body.lampa-modern-ui.lmui-input-pointer .card.hover:not(.focus) {
-    transform: translateY(-0.05em) scale(1.012);
+    transform: translateY(-0.025em) scale(1.006);
 }
 
-body.lampa-modern-ui.lmui-input-keyboard .card.focus {
-    transform: translateY(-0.09em) scale(1.026);
-}
-
-body.lampa-modern-ui.lmui-input-keyboard .card.focus .card__view {
-    box-shadow: 0 0 0 0.11em var(--lmui-accent), 0 0 0 0.24em rgba(105, 167, 255, 0.22), 0 0.9em 2.2em rgba(0, 0, 0, 0.4);
-}
-
+body.lampa-modern-ui.lmui-input-keyboard .card.focus,
 body.lampa-modern-ui.lmui-input-remote .card.focus {
-    transform: translateY(-0.16em) scale(1.05);
+    transform: translateY(-0.045em) scale(1.018);
 }
 
+body.lampa-modern-ui.lmui-input-keyboard .card.focus .card__view,
 body.lampa-modern-ui.lmui-input-remote .card.focus .card__view {
-    box-shadow: 0 0 0 0.14em var(--lmui-accent), 0 0 0 0.3em rgba(105, 167, 255, 0.26), 0 1.3em 3.1em rgba(0, 0, 0, 0.5);
+    border-color: #fff;
+    box-shadow: 0 0 0 0.12em #fff, 0 0 0 0.27em rgba(105, 167, 255, 0.72), 0 0.9em 2.2em rgba(0, 0, 0, 0.44);
 }
 
 body.lampa-modern-ui.lmui-input-remote .menu__item,
@@ -1994,7 +2135,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         var style = document.getElementById(STYLE_ID);
         if (style && style.parentNode) style.parentNode.removeChild(style);
         if (document.body) {
-            document.body.classList.remove('lampa-modern-ui', 'lmui-density-comfortable', 'lmui-density-compact', 'lmui-motion-calm', 'lmui-motion-minimal', 'lmui-performance-standard', 'lmui-performance-lite', 'lmui-layout-desktop', 'lmui-layout-tablet', 'lmui-layout-phone', 'lmui-height-normal', 'lmui-height-compact', 'lmui-device-desktop', 'lmui-device-tablet', 'lmui-device-phone', 'lmui-input-pointer', 'lmui-input-touch', 'lmui-input-keyboard', 'lmui-input-remote');
+            document.body.classList.remove('lampa-modern-ui', 'lmui-density-comfortable', 'lmui-density-compact', 'lmui-motion-calm', 'lmui-motion-minimal', 'lmui-performance-standard', 'lmui-performance-lite', 'lmui-layout-desktop', 'lmui-layout-tablet', 'lmui-layout-phone', 'lmui-height-normal', 'lmui-height-compact', 'lmui-device-desktop', 'lmui-device-tablet', 'lmui-device-phone', 'lmui-input-pointer', 'lmui-input-touch', 'lmui-input-keyboard', 'lmui-input-remote', 'lmui-tv-ui');
         }
         if (window.__LMUI_TEST_API__) delete window.__LMUI_TEST_API__;
         if (window.LMUI && window.LMUI.version === VERSION) delete window.LMUI;
@@ -2449,6 +2590,13 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return false;
     }
 
+    function tvUiEnvironment() {
+        try {
+            if (Lampa.Platform && typeof Lampa.Platform.screen === 'function' && Lampa.Platform.screen('tv')) return true;
+        } catch (error) {}
+        return remoteEnvironment();
+    }
+
     function detectInputMode() {
         var body = document.body;
         var touch = Number(window.navigator && window.navigator.maxTouchPoints || 0);
@@ -2465,7 +2613,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
     function removeThemeClasses(body) {
         Array.prototype.slice.call(body.classList).forEach(function (name) {
-            if (name === 'lampa-modern-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0 || name.indexOf('lmui-layout-') === 0 || name.indexOf('lmui-input-') === 0 || name.indexOf('lmui-height-') === 0) body.classList.remove(name);
+            if (name === 'lampa-modern-ui' || name === 'lmui-tv-ui' || name.indexOf('lmui-density-') === 0 || name.indexOf('lmui-motion-') === 0 || name.indexOf('lmui-performance-') === 0 || name.indexOf('lmui-device-') === 0 || name.indexOf('lmui-layout-') === 0 || name.indexOf('lmui-input-') === 0 || name.indexOf('lmui-height-') === 0) body.classList.remove(name);
         });
     }
 
@@ -2485,6 +2633,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         var input = lastInputMode || detectInputMode();
         lastInputMode = input;
         body.classList.add('lampa-modern-ui', 'lmui-density-' + density, 'lmui-motion-' + motion, 'lmui-performance-' + performance, 'lmui-layout-' + layout, 'lmui-height-' + heightMode, 'lmui-input-' + input, 'lmui-device-' + layout);
+        if (tvUiEnvironment()) body.classList.add('lmui-tv-ui');
     }
 
     function injectStyle() {
@@ -3339,6 +3488,23 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return removed;
     }
 
+    function decorateSearchKeyboard(screen) {
+        if (!screen || !screen.querySelectorAll) return;
+        var speech = window.Lampa && (Lampa.Speech || Lampa.SpeechRecognition);
+        var speechAvailable = !!(speech && (speech.listener || typeof speech.start === 'function' || typeof speech.toggle === 'function'));
+        Array.prototype.slice.call(screen.querySelectorAll('.simple-keyboard-mic')).forEach(function (node) {
+            node.classList.toggle('lmui-keyboard-mic-unavailable', !speechAvailable);
+            node.setAttribute('aria-hidden', speechAvailable ? 'false' : 'true');
+        });
+        Array.prototype.slice.call(screen.querySelectorAll('.simple-keyboard .hg-button')).forEach(function (node) {
+            var key = String(node.getAttribute('data-skbtn') || node.getAttribute('data-skbtnuid') || node.textContent || '').toLowerCase();
+            if (key.indexOf('bksp') >= 0 || key.indexOf('backspace') >= 0 || key.indexOf('⌫') >= 0 || key.indexOf('←') >= 0) node.classList.add('hg-button-bksp');
+            if (key.indexOf('space') >= 0 || key.indexOf('пробел') >= 0) node.classList.add('hg-button-space');
+            if (key.indexOf('lang') >= 0 || key.indexOf('language') >= 0 || key === 'рус' || key === 'eng') node.classList.add('hg-button-lang');
+            if (key.indexOf('number') >= 0 || key.indexOf('123') >= 0) node.classList.add('hg-button-numbers');
+        });
+    }
+
     function decorateSearch() {
         metrics.searchDecorations += 1;
         clearTimeout(searchTimer);
@@ -3349,6 +3515,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             screen.classList.add('lmui-search-screen');
             removeSearchActionButtons(screen);
+            decorateSearchKeyboard(screen);
             var query = readSearchQuery(root);
             var rawCount = searchResultCount(screen);
             var count = query.length >= 3 ? rawCount : 0;
@@ -3944,6 +4111,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 installContinueRouterGuard: installContinueRouterGuard,
                 readSearchQuery: readSearchQuery,
                 decorateSearch: decorateSearch,
+                decorateSearchKeyboard: decorateSearchKeyboard,
                 removeHiddenSettingsDom: removeHiddenSettingsDom,
                 removeHiddenSettingsComponents: removeHiddenSettingsComponents,
                 optimizeSearchSources: optimizeSearchSources,
