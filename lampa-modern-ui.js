@@ -1,13 +1,45 @@
-/* Lampa Modern UI 0.13.1 — permanent Shots guard. */
+/* Lampa Modern UI 0.13.2 — lightweight permanent Shots guard. */
 (function () {
     'use strict';
 
-    var FLAG = '__lmui_shots_guard_v110__';
-    var state = window.__LMUI_SHOTS_STATE__ || { blockedScripts: 0, blockedRequests: 0, removedNodes: 0, policyRuns: 0 };
+    var GUARD_KEY = '__LMUI_SHOTS_GUARD__';
+    var previous = window[GUARD_KEY];
+    if (previous && previous.version === '0.13.2') {
+        if (typeof previous.enforce === 'function') previous.enforce('duplicate-load');
+        return;
+    }
+    if (previous && typeof previous.destroy === 'function') {
+        try { previous.destroy('replace'); } catch (error) {}
+    }
+
+    var state = window.__LMUI_SHOTS_STATE__ || {
+        blockedScripts: 0,
+        blockedRequests: 0,
+        removedNodes: 0,
+        policyRuns: 0,
+        storageWrites: 0
+    };
+    if (typeof state.blockedScripts !== 'number') state.blockedScripts = 0;
     if (typeof state.blockedRequests !== 'number') state.blockedRequests = 0;
+    if (typeof state.removedNodes !== 'number') state.removedNodes = 0;
+    if (typeof state.policyRuns !== 'number') state.policyRuns = 0;
+    if (typeof state.storageWrites !== 'number') state.storageWrites = 0;
     window.__LMUI_SHOTS_STATE__ = state;
-    if (window[FLAG]) return;
-    window[FLAG] = true;
+
+    var observer = null;
+    var originals = [];
+    var destroyed = false;
+    var selectors = [
+        'script[src*="/plugin/shots"]',
+        '[data-action="shots"]',
+        '[data-component="shots"]',
+        '#sprite-shots',
+        '.shots-lenta',
+        '.shots-player-button',
+        '.shots-player-recorder',
+        '.shots-slides',
+        '.shots-video-present'
+    ].join(',');
 
     function isShotsUrl(value) {
         return /(?:\/plugin\/shots(?:[?#/]|$)|\/api\/shots\/)/i.test(String(value || ''));
@@ -15,6 +47,30 @@
 
     function log(event, value) {
         try { console.info('[LMUI Shots] ' + event, value || ''); } catch (error) {}
+    }
+
+    function rememberRestore(restore) {
+        if (typeof restore === 'function') originals.push(restore);
+    }
+
+    function setStorageIfChanged(name, value) {
+        try {
+            if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.get === 'function' && typeof Lampa.Storage.set === 'function') {
+                if (Lampa.Storage.get(name, undefined) === value) return false;
+                Lampa.Storage.set(name, value, true);
+                state.storageWrites += 1;
+                return true;
+            }
+            if (window.localStorage) {
+                var current = null;
+                try { current = JSON.parse(localStorage.getItem(name)); } catch (error) {}
+                if (current === value) return false;
+                localStorage.setItem(name, JSON.stringify(value));
+                state.storageWrites += 1;
+                return true;
+            }
+        } catch (error) {}
+        return false;
     }
 
     function completeBlocked(args) {
@@ -25,16 +81,17 @@
     function wrapLoader(name) {
         if (!window.Lampa || !Lampa.Utils) return false;
         var original = Lampa.Utils[name];
-        if (typeof original !== 'function' || original.__lmuiShotsGuard) return true;
+        if (typeof original !== 'function' || original.__lmuiShotsGuard) return !!original;
         var wrapped = function () {
             var args = Array.prototype.slice.call(arguments);
             var input = args[0];
             if (Array.isArray(input)) {
-                var filtered = input.filter(function (url) { return !isShotsUrl(url); });
-                if (filtered.length !== input.length) {
-                    state.blockedScripts += input.length - filtered.length;
-                    log('blocked loader item', input.filter(isShotsUrl));
+                var blocked = input.filter(isShotsUrl);
+                if (blocked.length) {
+                    state.blockedScripts += blocked.length;
+                    log('blocked loader item', blocked);
                 }
+                var filtered = input.filter(function (url) { return !isShotsUrl(url); });
                 if (!filtered.length) {
                     completeBlocked(args);
                     return;
@@ -51,6 +108,9 @@
         wrapped.__lmuiShotsGuard = true;
         wrapped.__lmuiShotsOriginal = original;
         Lampa.Utils[name] = wrapped;
+        rememberRestore(function () {
+            if (Lampa.Utils && Lampa.Utils[name] === wrapped) Lampa.Utils[name] = original;
+        });
         return true;
     }
 
@@ -74,6 +134,36 @@
         return true;
     }
 
+    function removeNode(node) {
+        if (!node || !node.parentNode) return false;
+        try {
+            if (typeof node.remove === 'function') node.remove();
+            else node.parentNode.removeChild(node);
+            state.removedNodes += 1;
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function removeShotsNodes(root) {
+        if (!root) return 0;
+        var removed = 0;
+        try {
+            if (root.nodeType === 1 && root.matches && root.matches(selectors)) {
+                blockScriptNode(root);
+                removed += removeNode(root) ? 1 : 0;
+                return removed;
+            }
+            if (!root.querySelectorAll) return removed;
+            Array.prototype.slice.call(root.querySelectorAll(selectors)).forEach(function (node) {
+                blockScriptNode(node);
+                if (removeNode(node)) removed += 1;
+            });
+        } catch (error) {}
+        return removed;
+    }
+
     function wrapInsertion(name) {
         var proto = window.Element && Element.prototype;
         if (!proto || typeof proto[name] !== 'function' || proto[name].__lmuiShotsGuard) return;
@@ -85,6 +175,7 @@
         wrapped.__lmuiShotsGuard = true;
         wrapped.__lmuiShotsOriginal = original;
         proto[name] = wrapped;
+        rememberRestore(function () { if (proto[name] === wrapped) proto[name] = original; });
     }
 
     function wrapScriptAttributes() {
@@ -109,6 +200,9 @@
                         return descriptor.set.call(this, value);
                     }
                 });
+                rememberRestore(function () {
+                    try { Object.defineProperty(proto, 'src', descriptor); } catch (error) {}
+                });
             } catch (error) {}
         }
         var originalSetAttribute = proto.setAttribute;
@@ -123,7 +217,9 @@
             };
             wrappedSetAttribute.__lmuiShotsGuard = true;
             proto.setAttribute = wrappedSetAttribute;
+            rememberRestore(function () { if (proto.setAttribute === wrappedSetAttribute) proto.setAttribute = originalSetAttribute; });
         }
+        rememberRestore(function () { try { delete proto.__lmuiShotsAttributesWrapped; } catch (error) {} });
     }
 
     function wrapNetwork() {
@@ -140,6 +236,7 @@
             wrappedFetch.__lmuiShotsGuard = true;
             wrappedFetch.__lmuiShotsOriginal = originalFetch;
             window.fetch = wrappedFetch;
+            rememberRestore(function () { if (window.fetch === wrappedFetch) window.fetch = originalFetch; });
         }
 
         var xhrProto = window.XMLHttpRequest && XMLHttpRequest.prototype;
@@ -159,76 +256,18 @@
             wrappedOpen.__lmuiShotsGuard = true;
             wrappedOpen.__lmuiShotsOriginal = originalOpen;
             xhrProto.open = wrappedOpen;
+            rememberRestore(function () { if (xhrProto.open === wrappedOpen) xhrProto.open = originalOpen; });
         }
     }
 
-    function removeShotsNodes(root) {
-        var scope = root && root.querySelectorAll ? root : document;
-        var selectors = [
-            'script[src*="/plugin/shots"]',
-            '[data-action="shots"]',
-            '[data-component="shots"]',
-            '#sprite-shots',
-            '.shots-lenta',
-            '.shots-player-button',
-            '.shots-player-recorder',
-            '.shots-slides',
-            '.shots-video-present'
-        ];
-        try {
-            Array.prototype.slice.call(scope.querySelectorAll(selectors.join(','))).forEach(function (node) {
-                if (!node || !node.parentNode) return;
-                if (typeof node.remove === 'function') node.remove();
-                else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
-                state.removedNodes += 1;
-            });
-        } catch (error) {}
-    }
-
-    function setStorage(name, value) {
-        try {
-            if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.set === 'function') Lampa.Storage.set(name, value);
-            else if (window.localStorage) localStorage.setItem(name, JSON.stringify(value));
-        } catch (error) {}
-    }
-
-    function enforce() {
-        state.policyRuns += 1;
-        window.plugin_shots_ready = true;
-        setStorage('shots_in_player', false);
-        setStorage('shots_in_card', false);
-        setStorage('content_rows_shots_main', false);
-        setStorage('shots_enabled', false);
-        wrapLoader('putScript');
-        wrapLoader('putScriptAsync');
-        wrapNetwork();
-        try {
-            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') {
-                Lampa.SettingsApi.removeComponent('shots');
-            }
-        } catch (error) {}
-        removeShotsNodes(document);
-    }
-
-    wrapInsertion('appendChild');
-    wrapInsertion('insertBefore');
-    wrapScriptAttributes();
-    enforce();
-
-    var attempts = 0;
-    var timer = setInterval(function () {
-        attempts += 1;
-        enforce();
-        if (attempts >= 80) clearInterval(timer);
-    }, 250);
-
-    if (window.MutationObserver && document.documentElement) {
-        var observer = new MutationObserver(function (mutations) {
+    function installObserver() {
+        if (observer || !window.MutationObserver || !document.documentElement) return;
+        observer = new MutationObserver(function (mutations) {
             mutations.forEach(function (mutation) {
                 Array.prototype.slice.call(mutation.addedNodes || []).forEach(function (node) {
+                    if (!node || node.nodeType !== 1) return;
                     if (blockScriptNode(node)) {
-                        if (typeof node.remove === 'function') node.remove();
-                        else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+                        removeNode(node);
                         return;
                     }
                     removeShotsNodes(node);
@@ -237,20 +276,134 @@
         });
         observer.observe(document.documentElement, { childList: true, subtree: true });
     }
+
+    function enforce(reason) {
+        if (destroyed) return state;
+        state.policyRuns += 1;
+        window.plugin_shots_ready = true;
+        setStorageIfChanged('shots_in_player', false);
+        setStorageIfChanged('shots_in_card', false);
+        setStorageIfChanged('content_rows_shots_main', false);
+        setStorageIfChanged('shots_enabled', false);
+        wrapLoader('putScript');
+        wrapLoader('putScriptAsync');
+        wrapNetwork();
+        try {
+            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('shots');
+        } catch (error) {}
+        if (reason === 'bootstrap' || reason === 'app-ready' || reason === 'console') removeShotsNodes(document);
+        installObserver();
+        return state;
+    }
+
+    function destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        if (observer) observer.disconnect();
+        observer = null;
+        while (originals.length) {
+            try { originals.pop()(); } catch (error) {}
+        }
+        if (window[GUARD_KEY] === api) delete window[GUARD_KEY];
+    }
+
+    var api = {
+        version: '0.13.2',
+        state: state,
+        enforce: enforce,
+        removeFrom: removeShotsNodes,
+        destroy: destroy
+    };
+    window[GUARD_KEY] = api;
+
+    wrapInsertion('appendChild');
+    wrapInsertion('insertBefore');
+    wrapScriptAttributes();
+    enforce('bootstrap');
 })();
 
-/* Lampa Modern UI 0.13.1
+/* Lampa Modern UI 0.13.2
  * Единый UI-слой поверх штатной навигации Lampa.
  * Главная не подменяется: добавляется только нативный ряд продолжения просмотра.
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.13.1';
+    var VERSION = '0.13.2';
     var PLUGIN_ID = 'lampa_modern_ui';
     var STYLE_ID = 'lampa-modern-ui-style';
-    var READY_FLAG = '__lampa_modern_ui_v0130_ready__';
+    var RUNTIME_KEY = '__LMUI_RUNTIME__';
     var CLEANUP_KEY = 'lmui_v090_cleanup';
+    var previousRuntime = window[RUNTIME_KEY];
+    if (previousRuntime && typeof previousRuntime.destroy === 'function') {
+        try { previousRuntime.destroy('replace'); } catch (error) {}
+    }
+
+    var nativeSetTimeout = window.setTimeout.bind(window);
+    var nativeClearTimeout = window.clearTimeout.bind(window);
+    var runtime = {
+        version: VERSION,
+        started: false,
+        destroyed: false,
+        timerIds: [],
+        disposers: [],
+        patches: [],
+        destroy: destroyRuntime
+    };
+    window[RUNTIME_KEY] = runtime;
+
+    function setTimeout(callback, delay) {
+        if (runtime.destroyed) return 0;
+        var id = nativeSetTimeout(function () {
+            var index = runtime.timerIds.indexOf(id);
+            if (index >= 0) runtime.timerIds.splice(index, 1);
+            if (!runtime.destroyed) callback();
+        }, delay || 0);
+        runtime.timerIds.push(id);
+        return id;
+    }
+
+    function clearTimeout(id) {
+        if (!id) return;
+        nativeClearTimeout(id);
+        var index = runtime.timerIds.indexOf(id);
+        if (index >= 0) runtime.timerIds.splice(index, 1);
+    }
+
+    function addDisposer(disposer) {
+        if (typeof disposer === 'function') runtime.disposers.push(disposer);
+        return disposer;
+    }
+
+    function listenDom(target, event, handler, options) {
+        if (!target || typeof target.addEventListener !== 'function') return false;
+        target.addEventListener(event, handler, options);
+        addDisposer(function () {
+            try { target.removeEventListener(event, handler, options); } catch (error) {}
+        });
+        return true;
+    }
+
+    function followEmitter(emitter, event, handler) {
+        if (!emitter || typeof emitter.follow !== 'function') return false;
+        emitter.follow(event, handler);
+        addDisposer(function () {
+            try {
+                if (typeof emitter.remove === 'function') emitter.remove(event, handler);
+                else if (typeof emitter.unfollow === 'function') emitter.unfollow(event, handler);
+            } catch (error) {}
+        });
+        return true;
+    }
+
+    function installPatch(target, key, wrapped) {
+        if (!target || typeof wrapped !== 'function') return false;
+        var original = target[key];
+        target[key] = wrapped;
+        runtime.patches.push({ target: target, key: key, original: original, wrapped: wrapped });
+        return true;
+    }
+
     var START_ATTEMPTS = 160;
     var startAttempts = 0;
     var startTimer = 0;
@@ -264,6 +417,9 @@
     var pendingDecorateRoots = [];
     var inputListenersInstalled = false;
     var lastInputMode = '';
+    var lastKeyboardInputAt = 0;
+    var lastMouseX = null;
+    var lastMouseY = null;
     var detailNeedsInitialFocus = false;
     var detailUserInteracted = false;
     var detailGeneration = 0;
@@ -278,7 +434,10 @@
     var settingsGuardInstalled = false;
     var searchObserver = null;
     var searchSourcesBridge = null;
+    var searchBridgeCleanup = [];
     var searchSourcesTimer = 0;
+    var searchHooksInstalled = false;
+    var speechHooksInstalled = false;
     var lastSearchState = '';
     var controllerDiagnosticsInstalled = false;
     var diagnosticsEnabled = true;
@@ -294,7 +453,32 @@
     var lastLayoutSignature = '';
     var continueRow = null;
     var routerGuardInstalled = false;
+    var lastContinueIdentitySignature = '';
+    var lastContinueProgressSignature = '';
+    var activityEventTimes = {};
     var CONTINUE_ROW_TIMEOUT = 1800;
+    var TORRENT_CACHE_TTL = 30000;
+    var TORRENT_OFFLINE_COOLDOWN = 45000;
+    var torrentCache = {
+        items: [],
+        pending: false,
+        waiters: [],
+        updatedAt: 0,
+        failedUntil: 0,
+        lastError: '',
+        lastSignature: ''
+    };
+    var metrics = {
+        activeMutations: 0,
+        searchMutations: 0,
+        settingsMutations: 0,
+        searchDecorations: 0,
+        continueDecorations: 0,
+        torrentRequests: 0,
+        torrentCacheHits: 0,
+        torrentCooldownHits: 0,
+        suppressedLogs: 0
+    };
 
     var KEYS = {
         enabled: 'lmui_enabled',
@@ -1070,8 +1254,6 @@ body.lampa-modern-ui .simple-keyboard-buttons__cancel {
     display: none !important;
 }
 
-body.lampa-modern-ui .lmui-search-summary,
-body.lampa-modern-ui .lmui-search-help,
 body.lampa-modern-ui .search__history.lmui-search-history-empty {
     display: none !important;
 }
@@ -1370,43 +1552,6 @@ body.lampa-modern-ui .navigation-bar__item.active {
 }
 
 
-/* Row states */
-body.lampa-modern-ui .card.lmui-state-card {
-    width: min(34em, 72vw) !important;
-}
-
-body.lampa-modern-ui .card.lmui-state-card .card__view {
-    min-height: 8.5em;
-    aspect-ratio: auto;
-    display: grid;
-    place-items: center;
-    padding: 1.3em;
-    background: linear-gradient(135deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018));
-}
-
-body.lampa-modern-ui .lmui-row-state {
-    width: 100%;
-    text-align: center;
-}
-
-body.lampa-modern-ui .lmui-row-state__title {
-    color: var(--lmui-text);
-    font-weight: 720;
-    font-size: 1.08em;
-}
-
-body.lampa-modern-ui .lmui-row-state__text {
-    margin-top: 0.35em;
-    color: var(--lmui-muted);
-    line-height: 1.45;
-}
-
-body.lampa-modern-ui .lmui-row-state__action {
-    margin-top: 0.7em;
-    color: var(--lmui-accent-strong);
-    font-weight: 680;
-}
-
 /* Detail semantics */
 body.lampa-modern-ui .activity--active.lmui-detail-screen .full-start-new__buttons {
     align-items: center;
@@ -1662,10 +1807,11 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return fallback;
     }
 
-    function storageSet(name, value) {
+    function storageSet(name, value, force) {
         try {
             if (window.Lampa && Lampa.Storage && typeof Lampa.Storage.set === 'function') {
-                Lampa.Storage.set(name, value);
+                if (!force && typeof Lampa.Storage.get === 'function' && Lampa.Storage.get(name, undefined) === value) return false;
+                Lampa.Storage.set(name, value, true);
                 return true;
             }
         } catch (error) {
@@ -1684,12 +1830,26 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             var enabled = window.Lampa && Lampa.Controller && typeof Lampa.Controller.enabled === 'function' ? Lampa.Controller.enabled() : null;
             return enabled ? {
                 name: enabled.name || '',
-                hasController: !!enabled.controller,
-                linkedModernMain: false
-            } : { name: '', hasController: false, linkedModernMain: false };
+                hasController: !!enabled.controller
+            } : { name: '', hasController: false };
         } catch (error) {
-            return { name: 'error', hasController: false, linkedModernMain: false };
+            return { name: 'error', hasController: false };
         }
+    }
+
+    function verboseOnlyDiagnostic(event) {
+        var name = String(event || '');
+        return name === 'activity.event' ||
+            name === 'controller.toggle' ||
+            name === 'search.state' ||
+            name === 'search.actions.removed' ||
+            name === 'search.request.clear' ||
+            name === 'search.request.scheduled' ||
+            name === 'search.request.coalesced' ||
+            name === 'search.results.hidden_cache' ||
+            name === 'continue.refresh.skipped' ||
+            name === 'continue.progress.updated' ||
+            name === 'shots.enforce';
     }
 
     function diagnostic(event, data, level) {
@@ -1702,6 +1862,10 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         diagnosticBuffer.push(entry);
         if (diagnosticBuffer.length > 240) diagnosticBuffer.shift();
         if (!diagnosticsEnabled) return entry;
+        if (!diagnosticsVerbose && verboseOnlyDiagnostic(entry.event) && level !== 'warn' && level !== 'error') {
+            metrics.suppressedLogs += 1;
+            return entry;
+        }
         var method = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info';
         try { console[method]('[LMUI ' + VERSION + '] ' + entry.event, entry.data || ''); }
         catch (error) {}
@@ -1740,7 +1904,16 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 memory: readEpisodeMemory(activeDetailCard)
             } : null,
             settingsComponentsInDom: settingsIds,
-            shots: clone(window.__LMUI_SHOTS_STATE__ || {})
+            shots: clone(window.__LMUI_SHOTS_STATE__ || {}),
+            torrentCache: {
+                count: torrentCache.items.length,
+                pending: torrentCache.pending,
+                updatedAt: torrentCache.updatedAt,
+                failedUntil: torrentCache.failedUntil,
+                lastError: torrentCache.lastError
+            },
+            metrics: clone(metrics),
+            runtime: { started: runtime.started, destroyed: runtime.destroyed, timers: runtime.timerIds.length, patches: runtime.patches.length }
         };
     }
 
@@ -1758,12 +1931,75 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             restoreEpisodeFocus: function () { return restoreEpisodeFocus(activeActivityRoot(), activeDetailCard, 'console', true); },
             enforceShotsOff: function () { enforceShotsOff('console'); return clone(window.__LMUI_SHOTS_STATE__ || {}); },
             cleanupSettings: function () { installSettingsGuard(); removeHiddenSettingsComponents(); scheduleSettingsCleanupBurst(); return diagnosticSnapshot().settingsComponentsInDom; },
+            refreshTorrents: function () { torrentCache.failedUntil = 0; torrentCache.updatedAt = 0; requestTorrents(true); },
+            destroy: function () { destroyRuntime('console'); },
             dump: function () {
                 var payload = { snapshot: diagnosticSnapshot(), logs: diagnosticBuffer.slice() };
                 try { console.info('[LMUI ' + VERSION + '] dump', payload); } catch (error) {}
                 return payload;
             }
         };
+    }
+
+    function destroyRuntime(reason) {
+        if (runtime.destroyed) return;
+        runtime.destroyed = true;
+        runtime.started = false;
+        while (runtime.timerIds.length) nativeClearTimeout(runtime.timerIds.pop());
+        if (decorateTimer && window.cancelAnimationFrame) {
+            try { window.cancelAnimationFrame(decorateTimer); } catch (error) {}
+        }
+        decorateTimer = 0;
+        [activeObserver, settingsObserver, searchObserver, episodeFocusObserver].forEach(function (observer) {
+            try { if (observer) observer.disconnect(); } catch (error) {}
+        });
+        activeObserver = settingsObserver = searchObserver = episodeFocusObserver = null;
+        observedRoot = null;
+        try { if (window.$) $(document).off('.lmui'); } catch (error) {}
+        releaseSearchBridge();
+        while (runtime.disposers.length) {
+            try { runtime.disposers.pop()(); } catch (error) {}
+        }
+        while (runtime.patches.length) {
+            var patch = runtime.patches.pop();
+            try { if (patch.target && patch.target[patch.key] === patch.wrapped) patch.target[patch.key] = patch.original; } catch (error) {}
+        }
+        if (window.Lampa && Lampa.ContentRows && typeof Lampa.ContentRows.remove === 'function') {
+            try { Lampa.ContentRows.remove('lmui_continue'); } catch (error) {
+                try { Lampa.ContentRows.remove(continueRow); } catch (nestedError) {}
+            }
+        }
+        try {
+            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent(PLUGIN_ID);
+        } catch (error) {}
+        try {
+            Array.prototype.slice.call(document.querySelectorAll('.lmui-series-summary, .lmui-series-primary, .lmui-all-episodes, .lmui-continue-badge')).forEach(function (node) {
+                if (node && node.parentNode) node.parentNode.removeChild(node);
+            });
+            Array.prototype.slice.call(document.querySelectorAll('.lmui-continue-card')).forEach(function (node) {
+                node.classList.remove('lmui-continue-card', 'lmui-continue-card--favorite', 'lmui-continue-card--torrent', 'lmui-continue-card--shortcut');
+                node.removeAttribute('data-lmui-continue-decorated');
+            });
+            Array.prototype.slice.call(document.querySelectorAll('[data-lmui-row="continue"]')).forEach(function (node) { node.removeAttribute('data-lmui-row'); });
+            Array.prototype.slice.call(document.querySelectorAll('.lmui-detail-screen, .lmui-detail-series, .lmui-detail-no-backdrop, .lmui-detail-title-long')).forEach(function (node) {
+                node.classList.remove('lmui-detail-screen', 'lmui-detail-series', 'lmui-detail-no-backdrop', 'lmui-detail-title-long');
+            });
+            Array.prototype.slice.call(document.querySelectorAll('.lmui-search-screen')).forEach(function (node) {
+                node.classList.remove('lmui-search-screen');
+                node.removeAttribute('data-lmui-search-state');
+                node.removeAttribute('data-lmui-search-query-length');
+                node.removeAttribute('data-lmui-search-count');
+            });
+        } catch (error) {}
+        var style = document.getElementById(STYLE_ID);
+        if (style && style.parentNode) style.parentNode.removeChild(style);
+        if (document.body) {
+            document.body.classList.remove('lampa-modern-ui', 'lmui-density-comfortable', 'lmui-density-compact', 'lmui-motion-calm', 'lmui-motion-minimal', 'lmui-performance-standard', 'lmui-performance-lite', 'lmui-layout-desktop', 'lmui-layout-tablet', 'lmui-layout-phone', 'lmui-height-normal', 'lmui-height-compact', 'lmui-device-desktop', 'lmui-device-tablet', 'lmui-device-phone', 'lmui-input-pointer', 'lmui-input-touch', 'lmui-input-keyboard', 'lmui-input-remote');
+        }
+        if (window.__LMUI_TEST_API__) delete window.__LMUI_TEST_API__;
+        if (window.LMUI && window.LMUI.version === VERSION) delete window.LMUI;
+        if (window[RUNTIME_KEY] === runtime) delete window[RUNTIME_KEY];
+        try { console.info('[LMUI ' + VERSION + '] runtime.destroy', { reason: reason || '' }); } catch (error) {}
     }
 
     function controllerToggleImportant(name, before, after) {
@@ -1782,8 +2018,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     function installControllerDiagnostics() {
         if (controllerDiagnosticsInstalled || !window.Lampa || !Lampa.Controller || typeof Lampa.Controller.toggle !== 'function') return;
         controllerDiagnosticsInstalled = true;
-        var original = Lampa.Controller.toggle;
-        if (original.__lmuiDiagnosticWrapped) return;
+        var current = Lampa.Controller.toggle;
+        var original = current.__lmuiDiagnosticOriginal || current;
         var wrapped = function (name) {
             var before = diagnosticController();
             var result;
@@ -1815,7 +2051,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         };
         wrapped.__lmuiDiagnosticWrapped = true;
         wrapped.__lmuiDiagnosticOriginal = original;
-        Lampa.Controller.toggle = wrapped;
+        installPatch(Lampa.Controller, 'toggle', wrapped);
     }
 
     function mediaType(card) {
@@ -1834,29 +2070,6 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return mediaType(card) + ':title:' + String(card.title || card.name || card.original_title || card.original_name || '').toLowerCase();
     }
 
-    function dedupeCards(items) {
-        var seen = {};
-        var result = [];
-        asArray(items).forEach(function (item) {
-            var card = item && item.card ? item.card : item;
-            if (!card) return;
-            var key = contentId(card);
-            if (!key || seen[key]) return;
-            seen[key] = true;
-            result.push(clone(card));
-        });
-        return result;
-    }
-
-    function favoriteGet(type) {
-        try {
-            if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') return [];
-            var value = Lampa.Favorite.get({ type: type });
-            return asArray(value && value.results ? value.results : value);
-        } catch (error) {
-            return [];
-        }
-    }
 
     function favoriteContinues(type) {
         try {
@@ -1948,37 +2161,133 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return result.slice(0, 20);
     }
 
-    function continueRowCallback(call) {
+    function continueIdentitySignature(cards) {
+        return asArray(cards).map(function (card) {
+            return card && (card.lmui_content_id || contentId(card)) || '';
+        }).filter(Boolean).join('|');
+    }
+
+    function cardProgressPercent(card) {
+        if (!card) return 0;
+        var timeline = card.timeline || card.time_line || card.playback || card.view || {};
+        var value = numberValue(card.progress, NaN);
+        if (!isFinite(value)) value = numberValue(card.percent, NaN);
+        if (!isFinite(value)) value = numberValue(timeline.progress, NaN);
+        if (!isFinite(value)) value = numberValue(timeline.percent, NaN);
+        if (!isFinite(value)) {
+            var position = numberValue(timeline.position || timeline.time || card.position || card.time, 0);
+            var duration = numberValue(timeline.duration || card.duration, 0);
+            value = duration > 0 ? position / duration * 100 : 0;
+        }
+        if (value > 0 && value <= 1) value *= 100;
+        return Math.max(0, Math.min(100, value || 0));
+    }
+
+    function continueProgressSignature(cards) {
+        return asArray(cards).map(function (card) {
+            var id = card && (card.lmui_content_id || contentId(card)) || '';
+            return id + ':' + Math.round(cardProgressPercent(card));
+        }).join('|');
+    }
+
+    function hasMeasurableContinueProgress(cards) {
+        return asArray(cards).some(function (card) {
+            if (!card || card.lmui_continue_source !== 'favorite') return false;
+            var timeline = card.timeline || card.time_line || card.playback || card.view;
+            return card.progress !== undefined || card.percent !== undefined || card.time !== undefined || card.position !== undefined ||
+                !!(timeline && (timeline.progress !== undefined || timeline.percent !== undefined || timeline.time !== undefined || timeline.position !== undefined));
+        });
+    }
+
+    function torrentItemsSignature(items) {
+        return asArray(items).slice(0, 12).map(function (item) {
+            return String(item && item.hash || '') + ':' + String(item && (item.updated_at || item.updated || item.timestamp || '') || '');
+        }).join('|');
+    }
+
+    function requestTorrents(force, callback) {
+        var done = typeof callback === 'function' ? callback : null;
+        var now = Date.now ? Date.now() : new Date().getTime();
+        if (!window.Lampa || !Lampa.Torserver || typeof Lampa.Torserver.my !== 'function') {
+            if (done) done(torrentCache.items.slice(), 'unavailable');
+            return false;
+        }
+        if (!force && torrentCache.updatedAt && now - torrentCache.updatedAt < TORRENT_CACHE_TTL) {
+            metrics.torrentCacheHits += 1;
+            if (done) done(torrentCache.items.slice(), 'cache');
+            return true;
+        }
+        if (!force && torrentCache.failedUntil > now) {
+            metrics.torrentCooldownHits += 1;
+            if (done) done(torrentCache.items.slice(), 'cooldown');
+            return false;
+        }
+        if (done) torrentCache.waiters.push(done);
+        if (torrentCache.pending) return true;
+
+        torrentCache.pending = true;
+        metrics.torrentRequests += 1;
         var completed = false;
-        var timer = 0;
-        function finish(torrents, reason) {
+        var requestTimer = setTimeout(function () {
+            finish(false, [], 'timeout');
+        }, CONTINUE_ROW_TIMEOUT);
+
+        function finish(success, items, reason, error) {
             if (completed) return;
             completed = true;
-            clearTimeout(timer);
-            var results = nativeContinueCards(torrents);
-            diagnostic('continue.row', { reason: reason || '', favorites: results.filter(function (item) { return item.lmui_continue_source === 'favorite'; }).length, torrents: results.filter(function (item) { return item.lmui_continue_source === 'torrent'; }).length });
-            call({ title: 'Продолжить', results: results });
+            clearTimeout(requestTimer);
+            torrentCache.pending = false;
+            if (runtime.destroyed) {
+                torrentCache.waiters = [];
+                return;
+            }
+            var previousSignature = torrentCache.lastSignature;
+            if (success) {
+                torrentCache.items = asArray(items).slice(0, 12);
+                torrentCache.updatedAt = Date.now ? Date.now() : new Date().getTime();
+                torrentCache.failedUntil = 0;
+                torrentCache.lastError = '';
+                torrentCache.lastSignature = torrentItemsSignature(torrentCache.items);
+            } else {
+                torrentCache.failedUntil = (Date.now ? Date.now() : new Date().getTime()) + TORRENT_OFFLINE_COOLDOWN;
+                torrentCache.lastError = String(error && error.message || reason || 'error');
+                diagnostic('continue.torserver_offline', { reason: reason || 'error', cooldownMs: TORRENT_OFFLINE_COOLDOWN }, 'warn');
+            }
+            var waiters = torrentCache.waiters.splice(0, torrentCache.waiters.length);
+            waiters.forEach(function (waiter) {
+                try { waiter(torrentCache.items.slice(), reason || (success ? 'ready' : 'error')); } catch (waiterError) {}
+            });
+            if (success && previousSignature !== torrentCache.lastSignature && lastContinueIdentitySignature) {
+                var nextIdentity = continueIdentitySignature(nativeContinueCards(torrentCache.items));
+                if (nextIdentity !== lastContinueIdentitySignature) scheduleHomeRefresh('torrents-ready', 50, true);
+            }
         }
-        if (!Lampa.Torserver || typeof Lampa.Torserver.my !== 'function') {
-            finish([], 'torserver-unavailable');
-            return;
-        }
-        timer = setTimeout(function () { finish([], 'torserver-timeout'); }, CONTINUE_ROW_TIMEOUT);
+
         try {
-            Lampa.Torserver.my(function (items) { finish(items, 'ready'); }, function () { finish([], 'torserver-error'); });
+            Lampa.Torserver.my(function (items) { finish(true, items, 'ready'); }, function (error) { finish(false, [], 'error', error); });
         } catch (error) {
-            diagnostic('continue.torserver_error', { message: String(error && error.message || error) }, 'warn');
-            finish([], 'torserver-exception');
+            finish(false, [], 'exception', error);
         }
+        return true;
+    }
+
+    function continueRowCallback(call) {
+        var results = nativeContinueCards(torrentCache.items);
+        lastContinueIdentitySignature = continueIdentitySignature(results);
+        lastContinueProgressSignature = continueProgressSignature(results);
+        diagnostic('continue.row', {
+            reason: torrentCache.items.length ? 'cache' : 'immediate',
+            favorites: results.filter(function (item) { return item.lmui_continue_source === 'favorite'; }).length,
+            torrents: results.filter(function (item) { return item.lmui_continue_source === 'torrent'; }).length
+        });
+        call({ title: 'Продолжить', results: results });
+        requestTorrents(false);
     }
 
     function installContinueRouterGuard() {
         if (routerGuardInstalled || !Lampa.Router || typeof Lampa.Router.call !== 'function') return false;
-        var original = Lampa.Router.call;
-        if (original.__lmuiContinueGuard) {
-            routerGuardInstalled = true;
-            return true;
-        }
+        var current = Lampa.Router.call;
+        var original = current.__lmuiContinueOriginal || current;
         var wrapped = function (route, data) {
             if (route === 'full' && data && data.lmui_open_mytorrents) {
                 diagnostic('continue.open_mytorrents');
@@ -1995,7 +2304,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         };
         wrapped.__lmuiContinueGuard = true;
         wrapped.__lmuiContinueOriginal = original;
-        Lampa.Router.call = wrapped;
+        installPatch(Lampa.Router, 'call', wrapped);
         routerGuardInstalled = true;
         return true;
     }
@@ -2032,19 +2341,64 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return active && active.component || '';
     }
 
-    function scheduleHomeRefresh(reason, delay) {
+    function updateContinueProgress(cards) {
+        var root = activeActivityRoot();
+        if (!root) return 0;
+        var byId = {};
+        asArray(cards).forEach(function (card) {
+            var id = card && (card.lmui_content_id || contentId(card));
+            if (id) byId[id] = card;
+        });
+        var updated = 0;
+        Array.prototype.slice.call(root.querySelectorAll('.card')).forEach(function (node) {
+            var current = cardData(node);
+            if (!current || !current.lmui_continue_source) return;
+            var id = current.lmui_content_id || contentId(current);
+            var next = byId[id];
+            if (!next) return;
+            var percent = cardProgressPercent(next);
+            var line = node.querySelector('.time-line > div, .time-line__progress, .card__progress > div');
+            if (line && line.style) line.style.width = percent + '%';
+            ['progress', 'percent', 'timeline', 'time', 'duration', 'position'].forEach(function (key) {
+                if (next[key] !== undefined) current[key] = clone(next[key]);
+            });
+            updated += 1;
+        });
+        if (updated) diagnostic('continue.progress.updated', { count: updated });
+        return updated;
+    }
+
+    function scheduleHomeRefresh(reason, delay, force) {
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(function () {
             try {
                 var active = activeActivity();
                 if (!active || active.component !== 'main') return;
+                var cards = nativeContinueCards(torrentCache.items);
+                var identity = continueIdentitySignature(cards);
+                var progress = continueProgressSignature(cards);
                 var timestamp = Date.now ? Date.now() : new Date().getTime();
+                if (!force && identity === lastContinueIdentitySignature) {
+                    if (progress !== lastContinueProgressSignature) {
+                        updateContinueProgress(cards);
+                        lastContinueProgressSignature = progress;
+                        diagnostic('continue.refresh.skipped', { reason: reason || 'progress-only', identityUnchanged: true });
+                        return;
+                    }
+                    var timelineReason = String(reason || '').indexOf('timeline') >= 0;
+                    if (!timelineReason || hasMeasurableContinueProgress(cards) || timestamp - lastMainRefreshAt < 15000) {
+                        diagnostic('continue.refresh.skipped', { reason: reason || 'unchanged', identityUnchanged: true });
+                        return;
+                    }
+                }
                 var elapsed = timestamp - lastMainRefreshAt;
-                if (elapsed < 650) {
-                    scheduleHomeRefresh(reason || 'throttled-update', 680 - elapsed);
+                if (elapsed < 900) {
+                    scheduleHomeRefresh(reason || 'throttled-update', 920 - elapsed, force);
                     return;
                 }
                 lastMainRefreshAt = timestamp;
+                lastContinueIdentitySignature = identity;
+                lastContinueProgressSignature = progress;
                 diagnostic('continue.refresh', { reason: reason || 'update' });
                 if (Lampa.Activity && typeof Lampa.Activity.refresh === 'function') Lampa.Activity.refresh(false);
             } catch (error) {
@@ -2200,8 +2554,9 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         if (settingsGuardInstalled || !window.Lampa || !Lampa.SettingsApi) return false;
         settingsGuardInstalled = true;
         ['addComponent', 'addParam'].forEach(function (method) {
-            var original = Lampa.SettingsApi[method];
-            if (typeof original !== 'function' || original.__lmuiSettingsGuard) return;
+            var current = Lampa.SettingsApi[method];
+            var original = current && current.__lmuiSettingsOriginal || current;
+            if (typeof original !== 'function') return;
             var wrapped = function (payload) {
                 var componentId = payload && (payload.component || payload.param && payload.param.component) || '';
                 var displayName = payload && (payload.name || payload.field && payload.field.name) || '';
@@ -2213,7 +2568,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             };
             wrapped.__lmuiSettingsGuard = true;
             wrapped.__lmuiSettingsOriginal = original;
-            Lampa.SettingsApi[method] = wrapped;
+            installPatch(Lampa.SettingsApi, method, wrapped);
         });
         diagnostic('settings.guard.installed');
         return true;
@@ -2239,7 +2594,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         } catch (error) {
             diagnostic('settings.components.discovery_error', { message: String(error && error.message || error) }, 'warn');
         }
-        ids.forEach(function (id) {
+        var removeIds = before.length ? ids.filter(function (id) { return before.indexOf(id) >= 0; }) : ids;
+        removeIds.forEach(function (id) {
             try { Lampa.SettingsApi.removeComponent(id); }
             catch (error) { diagnostic('settings.components.remove_error', { id: id, message: String(error && error.message || error) }, 'warn'); }
         });
@@ -2268,20 +2624,28 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         }
     }
 
-    function observeSettingsDom() {
-        if (!window.MutationObserver || settingsObserver || !document.body) return;
+    function observeSettingsDom(root) {
+        if (!window.MutationObserver) return false;
+        var target = root && root.nodeType === 1 ? root : document.querySelector('.settings__body, .settings');
+        if (!target) return false;
+        if (settingsObserver) settingsObserver.disconnect();
         settingsObserver = new MutationObserver(function (mutations) {
-            if (!document.body.classList.contains('settings--open') && !document.querySelector('.settings__body')) return;
             var shouldCleanup = false;
             mutations.forEach(function (mutation) {
-                if (shouldCleanup) return;
+                metrics.settingsMutations += 1;
                 Array.prototype.slice.call(mutation.addedNodes || []).forEach(function (node) {
                     if (!shouldCleanup && settingsMutationTouchesUi(node)) shouldCleanup = true;
                 });
             });
             if (shouldCleanup) scheduleSettingsCleanup(0, 'mutation');
         });
-        settingsObserver.observe(document.body, { childList: true, subtree: true });
+        settingsObserver.observe(target, { childList: true, subtree: true });
+        return true;
+    }
+
+    function stopSettingsObserver() {
+        if (settingsObserver) settingsObserver.disconnect();
+        settingsObserver = null;
     }
 
     function scheduleSettingsCleanup(delay, reason) {
@@ -2292,7 +2656,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function scheduleSettingsCleanupBurst(reason) {
-        [0, 120, 500, 1400].forEach(function (delay) {
+        [0, 350].forEach(function (delay) {
             setTimeout(function () {
                 removeHiddenSettingsComponents((reason || 'burst') + '-' + delay);
             }, delay);
@@ -2303,20 +2667,10 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return card && card.card_data && typeof card.card_data === 'object' ? card.card_data : null;
     }
 
-    function rowIdFromLine(line) {
-        if (!line) return '';
-        if (line.getAttribute) {
-            var owned = line.getAttribute('data-lmui-row');
-            if (owned) return owned;
-        }
-        var card = line.querySelector ? line.querySelector('.card') : null;
-        var data = cardData(card);
-        return data && data.lmui_row_id || '';
-    }
 
     function numberValue(value, fallback) {
         var parsed = Number(value);
-        return isFinite(parsed) ? parsed : (fallback || 0);
+        return isFinite(parsed) ? parsed : (fallback !== undefined ? fallback : 0);
     }
 
     function activeActivityRoot() {
@@ -2967,11 +3321,6 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return resultsRoot ? resultsRoot.querySelectorAll('.card, .search-item, .explorer-card').length : 0;
     }
 
-    function removeLegacySearchChrome(screen) {
-        Array.prototype.slice.call(screen.querySelectorAll('.lmui-search-summary, .lmui-search-help')).forEach(function (node) {
-            if (node && node.parentNode) node.parentNode.removeChild(node);
-        });
-    }
 
     function removeSearchActionButtons(screen) {
         if (!screen || !screen.querySelectorAll) return 0;
@@ -2991,6 +3340,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     }
 
     function decorateSearch() {
+        metrics.searchDecorations += 1;
         clearTimeout(searchTimer);
         searchTimer = setTimeout(function () {
             var root = searchRoot();
@@ -2998,7 +3348,6 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             if (!root || !screen) return;
             var startedAt = window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
             screen.classList.add('lmui-search-screen');
-            removeLegacySearchChrome(screen);
             removeSearchActionButtons(screen);
             var query = readSearchQuery(root);
             var rawCount = searchResultCount(screen);
@@ -3029,15 +3378,70 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         }, 55);
     }
 
+    function searchMutationRelevant(node) {
+        if (!node || node.nodeType !== 1) return false;
+        var selector = '.simple-keyboard, .simple-keyboard-buttons, .simple-keyboard-buttons__enter, .simple-keyboard-buttons__cancel, .search__history, .search__sources, .search__results, .search-source, .search-history-key, .card, .search-item, .explorer-card, .content-loading, .empty';
+        try {
+            if (node.matches && node.matches(selector)) return true;
+            return !!(node.querySelector && node.querySelector(selector));
+        } catch (error) {
+            return false;
+        }
+    }
+
     function observeSearchDom() {
         if (!window.MutationObserver) return;
         var screen = searchScreen();
         if (!screen) return;
         if (searchObserver) searchObserver.disconnect();
         removeSearchActionButtons(screen);
-        searchObserver = new MutationObserver(function () { decorateSearch(); });
-        searchObserver.observe(screen, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+        searchObserver = new MutationObserver(function (records) {
+            var relevant = false;
+            records.forEach(function (record) {
+                metrics.searchMutations += 1;
+                Array.prototype.slice.call(record.addedNodes || []).forEach(function (node) {
+                    if (!node || node.nodeType !== 1) return;
+                    if (node.matches && node.matches('.simple-keyboard-buttons, .simple-keyboard-buttons__enter, .simple-keyboard-buttons__cancel')) {
+                        removeSearchActionButtons(screen);
+                        relevant = true;
+                        return;
+                    }
+                    if (searchMutationRelevant(node)) relevant = true;
+                });
+            });
+            if (relevant) decorateSearch();
+        });
+        searchObserver.observe(screen, { childList: true, subtree: true });
         decorateSearch();
+    }
+
+    function addSearchBridgeCleanup(cleanup) {
+        if (typeof cleanup === 'function') searchBridgeCleanup.push(cleanup);
+    }
+
+    function installSearchBridgePatch(target, key, wrapped, original) {
+        target[key] = wrapped;
+        addSearchBridgeCleanup(function () {
+            try { if (target[key] === wrapped) target[key] = original; } catch (error) {}
+        });
+    }
+
+    function followSearchBridge(emitter, event, handler) {
+        if (!emitter || typeof emitter.follow !== 'function') return;
+        emitter.follow(event, handler);
+        addSearchBridgeCleanup(function () {
+            try {
+                if (typeof emitter.remove === 'function') emitter.remove(event, handler);
+                else if (typeof emitter.unfollow === 'function') emitter.unfollow(event, handler);
+            } catch (error) {}
+        });
+    }
+
+    function releaseSearchBridge() {
+        while (searchBridgeCleanup.length) {
+            try { searchBridgeCleanup.pop()(); } catch (error) {}
+        }
+        searchSourcesBridge = null;
     }
 
     function closeSearchObserver() {
@@ -3045,19 +3449,23 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         searchObserver = null;
         clearTimeout(searchSourcesTimer);
         searchSourcesTimer = 0;
-        searchSourcesBridge = null;
+        releaseSearchBridge();
         searchScheduledValue = '';
         searchResultSignatures = {};
         lastSearchState = '';
     }
 
     function optimizeSearchSources(sources) {
-        if (!sources || typeof sources.search !== 'function' || sources.__lmuiOptimizedSearch) return;
-        sources.__lmuiOptimizedSearch = true;
+        if (!sources || typeof sources.search !== 'function' || sources.__lmuiOptimizedSearchVersion === VERSION) return;
+        releaseSearchBridge();
+        sources.__lmuiOptimizedSearchVersion = VERSION;
+        addSearchBridgeCleanup(function () { if (sources.__lmuiOptimizedSearchVersion === VERSION) delete sources.__lmuiOptimizedSearchVersion; });
         searchSourcesBridge = sources;
-        var originalSearch = sources.search;
-        var originalCancel = typeof sources.cancel === 'function' ? sources.cancel : null;
-        sources.search = function (query, immediately) {
+        var currentSearch = sources.search;
+        var originalSearch = currentSearch.__lmuiOriginalSearch || currentSearch;
+        var currentCancel = typeof sources.cancel === 'function' ? sources.cancel : null;
+        var originalCancel = currentCancel && currentCancel.__lmuiOriginalCancel || currentCancel;
+        var wrappedSearch = function (query, immediately) {
             var context = this;
             var value = String(query || '');
             searchRequestGeneration++;
@@ -3090,16 +3498,20 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 decorateSearch();
             }, 420);
         };
+        wrappedSearch.__lmuiOriginalSearch = originalSearch;
+        installSearchBridgePatch(sources, 'search', wrappedSearch, currentSearch);
         if (originalCancel) {
-            sources.cancel = function () {
+            var wrappedCancel = function () {
                 clearTimeout(searchSourcesTimer);
                 searchSourcesTimer = 0;
                 searchScheduledValue = '';
                 return originalCancel.apply(this, arguments);
             };
+            wrappedCancel.__lmuiOriginalCancel = originalCancel;
+            installSearchBridgePatch(sources, 'cancel', wrappedCancel, currentCancel);
         }
         if (sources.listener && typeof sources.listener.follow === 'function') {
-            sources.listener.follow('finded', function (event) {
+            followSearchBridge(sources.listener, 'finded', function (event) {
                 var root = searchRoot();
                 var currentLength = root ? readSearchQuery(root).length : 0;
                 var sourceName = event && event.source && event.source.title || '';
@@ -3113,8 +3525,8 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 }
                 decorateSearch();
             });
-            sources.listener.follow('toggle', decorateSearch);
-            sources.listener.follow('create', decorateSearch);
+            followSearchBridge(sources.listener, 'toggle', decorateSearch);
+            followSearchBridge(sources.listener, 'create', decorateSearch);
         }
         diagnostic('search.sources.optimized', { debounceMs: 420, minimumQueryLength: 3 });
     }
@@ -3149,18 +3561,18 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             diagnostic('search.hooks.unavailable', null, 'warn');
             return false;
         }
-        if (Lampa.Search.__lmuiHooksInstalled) return true;
-        Lampa.Search.__lmuiHooksInstalled = true;
-        Lampa.Search.listener.follow('open', function () {
+        if (searchHooksInstalled) return true;
+        searchHooksInstalled = true;
+        followEmitter(Lampa.Search.listener, 'open', function () {
             diagnostic('search.open', { controller: diagnosticController() });
             setTimeout(observeSearchDom, 0);
             setTimeout(decorateSearch, 80);
         });
-        Lampa.Search.listener.follow('close', function () {
+        followEmitter(Lampa.Search.listener, 'close', function () {
             diagnostic('search.close', { controller: diagnosticController() });
             closeSearchObserver();
         });
-        Lampa.Search.listener.follow('sources', function (event) {
+        followEmitter(Lampa.Search.listener, 'sources', function (event) {
             optimizeSearchSources(event && event.sources);
             setTimeout(observeSearchDom, 0);
         });
@@ -3175,25 +3587,42 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         cards.forEach(function (card) {
             var data = cardData(card);
             if (!data || !data.lmui_continue_source) return;
+            metrics.continueDecorations += 1;
             card.classList.add('lmui-continue-card', 'lmui-continue-card--' + data.lmui_continue_source);
+            card.setAttribute('data-lmui-continue-decorated', VERSION);
             var line = card.closest && card.closest('.items-line');
             if (line) line.setAttribute('data-lmui-row', 'continue');
             var view = card.querySelector('.card__view');
-            if (!view || view.querySelector('.lmui-continue-badge')) return;
-            var badge = document.createElement('div');
-            badge.className = 'lmui-continue-badge';
+            if (!view) return;
+            var badge = view.querySelector('.lmui-continue-badge');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'lmui-continue-badge';
+                view.appendChild(badge);
+            }
             badge.textContent = data.lmui_continue_label || 'Продолжить';
-            view.appendChild(badge);
         });
+    }
+
+    function nodeTouches(node, selector) {
+        if (!node || node.nodeType !== 1) return false;
+        try {
+            if (node.matches && node.matches(selector)) return true;
+            return !!(node.querySelector && node.querySelector(selector));
+        } catch (error) {
+            return false;
+        }
     }
 
     function decorateNode(root) {
         if (!root || root.nodeType !== 1) return;
         var component = activeComponent();
-        if (component === 'main') decorateContinueCards(root.closest && root.closest('.activity--active') || root);
-        if (component === 'full') decorateDetail(root.closest && root.closest('.activity--active') || document.querySelector('.activity--active'));
-        if (component === 'search' || root.closest && root.closest('.search, .search-box') || root.querySelector && root.querySelector('.search, .search-box')) decorateSearch();
-        if (component === 'settings') scheduleSettingsCleanup();
+        if (component === 'main') decorateContinueCards(root);
+        if (component === 'full' && nodeTouches(root, '.full-start-new, .full-start-new__buttons, .full-episode, .season-episode, .card-episode')) {
+            decorateDetail(activeActivityRoot(), activeDetailData, false);
+        }
+        if (component === 'search' || nodeTouches(root, '.search, .search-box, .simple-keyboard, .search__results, .search__sources')) decorateSearch();
+        if (component === 'settings' && settingsMutationTouchesUi(root)) scheduleSettingsCleanup(0, 'activity-mutation');
     }
 
     function queueDecorateRoot(root) {
@@ -3225,6 +3654,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         observedRoot = root;
         activeObserver = new MutationObserver(function (records) {
             records.forEach(function (record) {
+                metrics.activeMutations += 1;
                 Array.prototype.slice.call(record.addedNodes || []).forEach(function (node) {
                     if (node && node.nodeType === 1) scheduleDecorate(node);
                 });
@@ -3261,16 +3691,31 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
     function installInputModeListeners() {
         if (inputListenersInstalled) return;
         inputListenersInstalled = true;
-        window.addEventListener('pointerdown', function (event) {
+        listenDom(window, 'pointerdown', function (event) {
             setInputModeClass(event && event.pointerType === 'touch' ? 'touch' : 'pointer');
             markDetailInteraction();
         }, { passive: true });
-        window.addEventListener('mousemove', function () { setInputModeClass('pointer'); }, { passive: true });
-        window.addEventListener('touchstart', function () {
+        listenDom(window, 'mousemove', function (event) {
+            var now = Date.now ? Date.now() : new Date().getTime();
+            var x = event && typeof event.clientX === 'number' ? event.clientX : 0;
+            var y = event && typeof event.clientY === 'number' ? event.clientY : 0;
+            if (lastMouseX === null || lastMouseY === null) {
+                lastMouseX = x;
+                lastMouseY = y;
+                return;
+            }
+            var distance = Math.abs(x - lastMouseX) + Math.abs(y - lastMouseY);
+            lastMouseX = x;
+            lastMouseY = y;
+            if (distance < 8 || now - lastKeyboardInputAt < 650) return;
+            setInputModeClass('pointer');
+        }, { passive: true });
+        listenDom(window, 'touchstart', function () {
             setInputModeClass('touch');
             markDetailInteraction();
         }, { passive: true });
-        window.addEventListener('keydown', function () {
+        listenDom(window, 'keydown', function () {
+            lastKeyboardInputAt = Date.now ? Date.now() : new Date().getTime();
             setInputModeClass(keyInputMode());
             markDetailInteraction();
         }, { passive: true });
@@ -3303,38 +3748,24 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
 
     function enforceShotsOff(reason) {
         window.plugin_shots_ready = true;
-        storageSet('shots_in_player', false);
-        storageSet('shots_in_card', false);
-        storageSet('content_rows_shots_main', false);
-        storageSet('shots_enabled', false);
+        var before = clone(window.__LMUI_SHOTS_STATE__ || {});
+        var guard = window.__LMUI_SHOTS_GUARD__;
+        if (guard && typeof guard.enforce === 'function') guard.enforce(reason || 'runtime');
+        else {
+            storageSet('shots_in_player', false);
+            storageSet('shots_in_card', false);
+            storageSet('content_rows_shots_main', false);
+            storageSet('shots_enabled', false);
+        }
         try {
             if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('shots');
         } catch (error) {
             diagnostic('shots.settings_remove_error', { message: String(error && error.message || error) }, 'warn');
         }
-        var removed = 0;
-        try {
-            Array.prototype.slice.call(document.querySelectorAll([
-                '[data-action="shots"]',
-                '[data-component="shots"]',
-                '#sprite-shots',
-                '.shots-lenta',
-                '.shots-player-button',
-                '.shots-player-recorder',
-                '.shots-slides',
-                '.shots-video-present'
-            ].join(','))).forEach(function (node) {
-                if (!node || !node.parentNode) return;
-                if (typeof node.remove === 'function') node.remove();
-                else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
-                removed += 1;
-            });
-        } catch (error) {}
-        diagnostic('shots.enforce', {
-            reason: reason || '',
-            removedNodes: removed,
-            guard: clone(window.__LMUI_SHOTS_STATE__ || {})
-        });
+        var after = clone(window.__LMUI_SHOTS_STATE__ || {});
+        if (diagnosticsVerbose || JSON.stringify(before) !== JSON.stringify(after)) {
+            diagnostic('shots.enforce', { reason: reason || '', guard: after });
+        }
     }
 
     function destructiveCleanup() {
@@ -3352,39 +3783,81 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         return !!(document.head && document.body && window.Lampa && Lampa.Storage && Lampa.SettingsApi && Lampa.ContentRows && Lampa.Controller && Lampa.Router);
     }
 
+    function restoreSearchAfterSpeech(reason) {
+        var root = searchRoot();
+        var screen = searchScreen();
+        if (!root || !screen) return false;
+        Array.prototype.slice.call(screen.querySelectorAll('.search-box__voice, .search__voice, .simple-keyboard-mic, [data-action="speech"]')).forEach(function (node) {
+            node.classList.remove('active', 'loading', 'searching', 'recording');
+        });
+        var input = root.querySelector('input.simple-keyboard-input, .search-box input, input.search__input, textarea.search__input');
+        if (input && typeof input.focus === 'function') {
+            try { input.focus({ preventScroll: true }); }
+            catch (error) { try { input.focus(); } catch (nestedError) {} }
+        }
+        decorateSearch();
+        if (diagnosticsVerbose) diagnostic('search.speech.restore', { reason: reason || '' });
+        return true;
+    }
+
+    function installSpeechHooks() {
+        if (speechHooksInstalled) return true;
+        var speech = window.Lampa && (Lampa.Speech || Lampa.SpeechRecognition);
+        if (!speech || !speech.listener || typeof speech.listener.follow !== 'function') return false;
+        speechHooksInstalled = true;
+        followEmitter(speech.listener, 'error', function () { restoreSearchAfterSpeech('error'); });
+        followEmitter(speech.listener, 'end', function () { restoreSearchAfterSpeech('end'); });
+        return true;
+    }
+
+    function activityEventAllowed(event) {
+        var key = String(event && event.type || '') + ':' + String(event && event.component || '');
+        var now = Date.now ? Date.now() : new Date().getTime();
+        if (activityEventTimes[key] && now - activityEventTimes[key] < 120) return false;
+        activityEventTimes[key] = now;
+        return true;
+    }
+
     function followEvents() {
         if (!Lampa.Listener || typeof Lampa.Listener.follow !== 'function') return;
-        Lampa.Listener.follow('activity', function (event) {
-            if (!event) return;
+        followEmitter(Lampa.Listener, 'activity', function (event) {
+            if (!event || !activityEventAllowed(event)) return;
             diagnostic('activity.event', { type: event.type, component: event.component || '', controller: diagnosticController() });
-            if (event.type === 'start' || event.type === 'create') {
+            if (event.type === 'create') {
+                if (event.body && event.body[0]) scheduleDecorate(event.body[0]);
+                return;
+            }
+            if (event.type === 'start') {
                 setTimeout(function () {
                     observeActiveActivity();
-                    scheduleDecorate();
-                    if (event.component === 'main') decorateContinueCards(activeActivityRoot() || document);
-                    if (event.component === 'settings') scheduleSettingsCleanupBurst();
+                    var root = activeActivityRoot();
+                    if (root) scheduleDecorate(root);
+                    if (event.component === 'settings') {
+                        observeSettingsDom(root);
+                        scheduleSettingsCleanupBurst('activity-settings');
+                    } else stopSettingsObserver();
                     if (event.component === 'episodes') {
                         episodeRestorePending = true;
                         var episodeActivity = activeActivity();
                         var episodeCard = episodeActivity && (episodeActivity.card || episodeActivity.object && episodeActivity.object.card || activeDetailCard);
-                        observeEpisodeFocus(activeActivityRoot(), episodeCard, 'activity-' + event.type);
+                        observeEpisodeFocus(root, episodeCard, 'activity-start');
                     } else stopEpisodeFocusObserver();
-                    enforceShotsOff('activity-' + (event.component || 'unknown'));
-                }, 60);
+                }, 40);
             }
             if (event.type === 'archive') scheduleDecorate();
         });
-        Lampa.Listener.follow('resize_end', function () {
+        followEmitter(Lampa.Listener, 'resize_end', function () {
+            var viewport = layoutViewport();
+            var layout = detectLayoutMode();
+            var height = detectHeightMode();
+            var signature = [layout, height, viewport.width, viewport.height].join(':');
+            if (signature === lastLayoutSignature) return;
+            lastLayoutSignature = signature;
             applyTheme();
             scheduleDecorate();
-            var viewport = layoutViewport();
-            var signature = [detectLayoutMode(), detectHeightMode(), viewport.width, viewport.height].join(':');
-            if (signature !== lastLayoutSignature) {
-                lastLayoutSignature = signature;
-                diagnostic('layout.resize', { layout: detectLayoutMode(), height: detectHeightMode(), viewport: viewport });
-            }
+            diagnostic('layout.resize', { layout: layout, height: height, viewport: viewport });
         });
-        Lampa.Listener.follow('full', function (event) {
+        followEmitter(Lampa.Listener, 'full', function (event) {
             if (!event) return;
             if (event.type === 'start') {
                 detailNeedsInitialFocus = true;
@@ -3393,38 +3866,43 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             decorateDetailFromFullEvent(event);
             if (event.type === 'start' || event.type === 'complite' || event.type === 'build') scheduleDecorate(event.body && event.body[0]);
         });
-        Lampa.Listener.follow('favorite', function () { scheduleHomeRefresh('favorite'); });
-        Lampa.Listener.follow('state:changed', function (event) {
+        followEmitter(Lampa.Listener, 'favorite', function () { scheduleHomeRefresh('favorite'); });
+        followEmitter(Lampa.Listener, 'state:changed', function (event) {
             if (!event || ['favorite', 'timetable', 'timeline'].indexOf(event.target) < 0) return;
             scheduleHomeRefresh('state-' + event.target, 80);
         });
-        Lampa.Listener.follow('timeline', function () {
+        followEmitter(Lampa.Listener, 'timeline', function () {
             scheduleHomeRefresh('timeline', 120);
             if (activeComponent() === 'full' && activeDetailData) {
                 var root = activeActivityRoot();
                 if (root) decorateDetail(root, activeDetailData, false);
             }
         });
-        Lampa.Listener.follow('app', function (event) {
+        followEmitter(Lampa.Listener, 'app', function (event) {
             if (event && event.type === 'ready') {
                 diagnostic('app.ready', diagnosticSnapshot());
                 enforceShotsOff('app-ready');
                 installSettingsGuard();
-                scheduleSettingsCleanupBurst();
+                scheduleSettingsCleanup(0, 'app-ready');
                 installSearchHooks();
+                installSpeechHooks();
+                requestTorrents(false);
             }
         });
         if (Lampa.Settings && Lampa.Settings.listener && typeof Lampa.Settings.listener.follow === 'function') {
-            Lampa.Settings.listener.follow('open', function (event) {
+            followEmitter(Lampa.Settings.listener, 'open', function (event) {
                 diagnostic('settings.open', { name: event && event.name || '', controller: diagnosticController() });
-                if (event && event.body && event.body[0]) removeHiddenSettingsDom(event.body[0]);
-                scheduleSettingsCleanupBurst();
+                if (event && event.body && event.body[0]) {
+                    removeHiddenSettingsDom(event.body[0]);
+                    observeSettingsDom(event.body[0]);
+                } else observeSettingsDom();
+                scheduleSettingsCleanupBurst('settings-open');
             });
         }
     }
 
     function start() {
-        if (window[READY_FLAG]) return;
+        if (runtime.destroyed || runtime.started) return;
         if (!readyToStart()) {
             startAttempts += 1;
             if (startAttempts < START_ATTEMPTS) {
@@ -3433,7 +3911,7 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
             } else console.warn('[Lampa Modern UI] Required Lampa API unavailable');
             return;
         }
-        window[READY_FLAG] = true;
+        runtime.started = true;
         exposeDiagnostics();
         diagnostic('start.begin', {
             userAgent: window.navigator && window.navigator.userAgent || '',
@@ -3445,22 +3923,19 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
         injectStyle();
         enforceShotsOff('start');
         installSettingsGuard();
-        removeHiddenSettingsComponents();
         try { if (Lampa.SettingsApi && typeof Lampa.SettingsApi.removeComponent === 'function') Lampa.SettingsApi.removeComponent('lampa_personal'); } catch (error) {}
         addSettings();
-        removeHiddenSettingsComponents();
+        removeHiddenSettingsComponents('start-after-settings');
         registerContinueRow();
         applyTheme();
         installControllerDiagnostics();
         installInteractionHandlers();
         installInputModeListeners();
         installSearchHooks();
-        observeSettingsDom();
+        installSpeechHooks();
         followEvents();
         observeActiveActivity();
-        scheduleSettingsCleanupBurst();
         scheduleDecorate();
-        scheduleHomeRefresh('continue-row-register', 120);
         if (window.__LMUI_TEST_MODE__) {
             window.__LMUI_TEST_API__ = {
                 nativeContinueCards: nativeContinueCards,
@@ -3474,20 +3949,23 @@ body.lampa-modern-ui.lmui-layout-phone .simple-keyboard {
                 optimizeSearchSources: optimizeSearchSources,
                 diagnosticSnapshot: diagnosticSnapshot,
                 enforceShotsOff: enforceShotsOff,
+                requestTorrents: requestTorrents,
+                updateContinueProgress: updateContinueProgress,
+                destroyRuntime: destroyRuntime,
                 seriesEpisodesFromData: seriesEpisodesFromData,
                 resolveSeriesPlayback: resolveSeriesPlayback,
                 episodeCoordinates: episodeCoordinates,
                 formatEpisodeTitle: formatEpisodeTitle
             };
         }
-        window.addEventListener('orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
+        listenDom(window, 'orientationchange', function () { applyTheme(); scheduleDecorate(); }, { passive: true });
         diagnostic('start.ready', diagnosticSnapshot());
     }
 
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+    if (document.readyState === 'loading') listenDom(document, 'DOMContentLoaded', start, { once: true });
     else start();
 
     if (window.Lampa && Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
-        Lampa.Listener.follow('app', function (event) { if (event && event.type === 'ready') start(); });
+        followEmitter(Lampa.Listener, 'app', function (event) { if (event && event.type === 'ready') start(); });
     }
 })();
